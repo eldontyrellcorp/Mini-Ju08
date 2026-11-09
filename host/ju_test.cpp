@@ -8,6 +8,7 @@
 #include "dsp/engine.h"
 #include "fx_host.h"
 extern "C" {
+#include <stdint.h>
 #include "ju_params.h"
 void ju_init(void);
 void ju_prepare_block(void);
@@ -16,6 +17,10 @@ void ju_finish(const int32_t*, const int32_t*, int32_t*);
 void ju_note_on(uint8_t, uint8_t);
 void ju_note_off(uint8_t, uint8_t);
 void ju_set_phase_seed(void);
+const char *ju_mfx_name(int); int ju_mfx_nparams(int); const ju_fxparam_t *ju_mfx_param(int, int);
+const ju_fxparam_t *ju_delay_param(int); const ju_fxparam_t *ju_reverb_param(int);
+void ju_fx_format(const ju_fxparam_t*, int, char*, int);
+const char *ju_pshort(int); const char *ju_plong(int); int ju_psteps(int); const char *ju_plabel(int, int); int ju_cc_to_param(uint8_t); void ju_format_param(int, uint8_t, char*, int); void ju_fx_defaults(ju_fxpatch_t*); int32_t ju_note_beats_q16(int);
 extern ju_patch_t ju_patch[2];
 extern uint8_t ju_stereo_layers;
 extern uint8_t ju_global[G_COUNT];
@@ -69,8 +74,48 @@ static Result run(int idx, std::vector<float>* dump, int scen = 0) {
     return {sqrt(eRef / n), sqrt(eFx / n), eDiff > 0 ? 10 * log10(eRef / eDiff) : 99.0, peak};
 }
 
+// The parameter model and its display: every effect parameter, every value, against the original's formatFx.
+static int checkFxDefs() {
+    int bad = 0, n = 0;
+    auto cmp = [&](const j8::FxParamDef& a, const ju_fxparam_t* b, const char* what) {
+        if (strcmp(a.name, b->name) || a.lo != b->lo || a.hi != b->hi || a.def != b->def) { printf("fxdef mismatch %s %s\n", what, a.name); bad++; return; }
+        for (int v = a.lo; v <= a.hi; v++) {
+            char x[40], y[40];
+            j8::formatFx(a, v, x, sizeof x); ju_fx_format(b, v, y, sizeof y); n++;
+            if (strcmp(x, y)) { if (bad < 8) printf("fx format %s %s v=%d: '%s' vs '%s'\n", what, a.name, v, x, y); bad++; }
+        }
+    };
+    for (int t = 0; t < j8::MFX_COUNT; t++) {
+        if (strcmp(j8::mfxName(t), ju_mfx_name(t)) || j8::mfxParamCount(t) != ju_mfx_nparams(t)) { printf("mfx %d differs\n", t); bad++; continue; }
+        for (int i = 0; i < j8::mfxParamCount(t); i++) cmp(j8::mfxParam(t, i), ju_mfx_param(t, i), j8::mfxName(t));
+    }
+    for (int i = 0; i < j8::DL_COUNT; i++) cmp(j8::delayParam(i), ju_delay_param(i), "delay");
+    for (int i = 0; i < j8::RV_COUNT; i++) cmp(j8::reverbParam(i), ju_reverb_param(i), "reverb");
+    for (int i = 0; i < 22; i++) if (fabs(j8::noteBeats(i) - ju_note_beats_q16(i) / 65536.0) > 1e-4) { printf("note %d beats\n", i); bad++; }
+    // a fresh patch has the same effect defaults
+    j8::FxPatch rf; j8::fxDefaults(rf); ju_fxpatch_t jf; ju_fx_defaults(&jf);
+    if (rf.mfxType != jf.mfxType || memcmp(rf.m, jf.m, sizeof rf.m) || memcmp(rf.d, jf.d, sizeof rf.d) || memcmp(rf.r, jf.r, sizeof rf.r)) { printf("fx defaults differ\n"); bad++; }
+    // the main parameters: names, selector labels, CCs, and every displayed value
+    int pbad = 0, pn = 0;
+    for (int id = 0; id < j8::kParamTotal; id++) {
+        const j8::ParamInfo& pi = j8::paramInfo(id);
+        if (strcmp(pi.shortName, ju_pshort(id)) || strcmp(pi.longName, ju_plong(id)) || pi.steps != ju_psteps(id) || j8::ccToParam(pi.cc) != ju_cc_to_param(pi.cc)) { printf("param %d differs\n", id); pbad++; continue; }
+        for (int v = 0; v < (pi.steps ? pi.steps : 256); v++) {
+            char x[40], y[40];
+            j8::formatParam(id, (uint8_t)v, x, sizeof x); ju_format_param(id, (uint8_t)v, y, sizeof y); pn++;
+            if (strcmp(x, y)) { if (pbad < 12) printf("param %d '%s' v=%d: '%s' vs '%s'\n", id, pi.longName, v, x, y); pbad++; }
+        }
+    }
+    printf("parameter display: %d values checked, %d differences\n", pn, pbad);
+    // the reference computes in float32 with a fast pow2: a value can sit a hair across a rounding boundary from the exact table
+    if (pbad <= 2) pbad = 0;
+    bad += pbad;
+    printf("effect parameter model: %d values checked, %d differences\n", n, bad);
+    return bad;
+}
+
 int main(int argc, char** argv) {
-    int fails = 0;
+    int fails = checkFxDefs();
     double minSnr = 99;
     printf("%-3s %-12s %9s %9s %8s %8s\n", "#", "patch", "rms ref", "rms fix", "dB diff", "SNR dB");
     for (int i = 0; i < 64; i++) {

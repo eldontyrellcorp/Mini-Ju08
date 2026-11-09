@@ -2,6 +2,7 @@
 // Built and run by host/build.sh against the reference sources (JU_REF, default ~/jupiter8_esp32).
 #include <cstdio>
 #include "dsp/params.h"
+#include "dsp/fx_params.h"
 using namespace j8;
 int main(int argc, char** argv) {
     static Patch bank[64];
@@ -11,9 +12,16 @@ int main(int argc, char** argv) {
                " * 64 patches, numbered 11-88 by bank and slot (index = 8 * (bank - 1) + slot - 1). */\n#pragma once\n"
                "#include \"ju_params.h\"\n\n#define JU_NPRESET 64\nstatic const ju_patch_t JU_PRESETS[JU_NPRESET] = {\n");
     for (int i = 0; i < 64; i++) {
+        const FxPatch& x = bank[i].fx;
         fprintf(f, "    {\"%s\", {", bank[i].name);
         for (int k = 0; k < P_COUNT; k++) fprintf(f, "%d%s", bank[i].v[k], k + 1 < P_COUNT ? "," : "");
-        fprintf(f, "}},\n");
+        fprintf(f, "}, {%d,%d,%d,%d, {", x.mfxType, x.mfxOn, x.dlyOn, x.revOn);
+        for (int k = 0; k < kMfxMaxParams; k++) fprintf(f, "%d%s", x.m[k], k + 1 < kMfxMaxParams ? "," : "");
+        fprintf(f, "}, {");
+        for (int k = 0; k < DL_COUNT; k++) fprintf(f, "%d%s", x.d[k], k + 1 < DL_COUNT ? "," : "");
+        fprintf(f, "}, {");
+        for (int k = 0; k < RV_COUNT; k++) fprintf(f, "%d%s", x.r[k], k + 1 < RV_COUNT ? "," : "");
+        fprintf(f, "}}},\n");
     }
     fprintf(f, "};\n");
     fclose(f);

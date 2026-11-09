@@ -49,6 +49,7 @@ SDK_SHA256 = {
     "cfg/eq_cfg_hw.bin": "41167491bffed4651750719c973d2758adeb9021a5670d02d6a53c85ed80ea7d",
 }
 
+MAIN = os.environ.get("FW_MAIN", "felucca.c")   # the top-level source: felucca.c (Mini-Tone) or ju08.c (the Jupiter-8)
 PRODUCT = "FM-1_900"                # package identity; release builds are FM-1_9XY
 VERSION = None                      # FELUCCA_VERSION for release builds (default: firmware/src/felucca.c)
 
@@ -204,8 +205,8 @@ def build_app():
     # marked minsize (tools/size_fns.py), then the IR is compiled at -Os. FELUCCA_SIZE=0: -Os everywhere
     size = os.environ.get("FELUCCA_SIZE") != "0"
     cmain = (("cc", *flags, "-S", "-emit-llvm", "-Xclang", "-disable-llvm-optzns", "-c",
-              FW / "src" / "felucca.c", "-o", OUT / "felucca.ll") if size else
-             ("cc", *flags, "-c", FW / "src" / "felucca.c", "-o", OUT / "felucca.o"))
+              FW / "src" / MAIN, "-o", OUT / "felucca.ll") if size else
+             ("cc", *flags, "-c", FW / "src" / MAIN, "-o", OUT / "felucca.o"))
     tc_all(("cc", "-c", FW / "crt0.S", "-o", OUT / "crt0.o"),
            ("cc", "-c", FW / "hal" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
            ("cc", "-c", FW / "hal" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),

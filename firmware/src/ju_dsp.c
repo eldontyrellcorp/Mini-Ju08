@@ -567,6 +567,7 @@ void ju_patch_init(ju_patch_t *p, const char *name)
     int i;
     for (i = 0; i < (int)sizeof(*p); i++) ((uint8_t *)p)[i] = 0;
     for (i = 0; i < 11 && name[i]; i++) p->name[i] = name[i];
+    ju_fx_defaults(&p->fx);
     v[P_LFO_RATE] = 150; v[P_LFO_WAVE] = LFO_SINE;
     v[P_VM_DEST] = DEST_BOTH; v[P_VM_PW] = 0; v[P_VM_PWMODE] = PW_MAN;
     v[P_V1_RANGE] = 1; v[P_V1_WAVE] = V1_SAW;

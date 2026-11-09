@@ -108,6 +108,27 @@ L.append(arr("JU_VCF_LFO", "int32_t", vfl))
 L.append(arr("JU_XMOD", "int32_t", xm))
 L.append(arr("JU_V2TUNE", "int32_t", v2t))
 
+# ---- display values (exact, so the screen needs no float): times in microseconds, frequencies in Hz x 10, depths in octaves x 100
+def us(s): return clampu(s * 1e6)
+d_lfo, d_dly, d_att, d_dec, d_por, d_ris, d_cut, d_hpf, d_arp, d_vlo, d_veo, d_xm, d_vfe, d_vfl = ([] for _ in range(14))
+for v in range(256):
+    x = n(v)
+    d_lfo.append(clampu(0.05 * 2 ** (9.6439 * x) * 100))
+    d_dly.append(us(4.0 * x * x))
+    d_att.append(us(0.001 * 2 ** (12.2877 * x)))
+    d_dec.append(us(0.001 * 2 ** (13.2877 * x)))
+    d_por.append(0 if v == 0 else us(0.002 * 2 ** (10.5507 * x)))
+    d_ris.append(us(5.0 * x * x))
+    d_cut.append(clampu(16 * 2 ** (10.2877 * x) * 100))
+    d_hpf.append(600 if v == 0 else clampu(16 * 2 ** (7.6439 * x) * 100))
+    d_arp.append(clampu(2 ** (4.3219 * x) * 10))
+    d_vlo.append(clampu(3.0 * x * x * 100)); d_veo.append(clampu(5.0 * x * x * 100)); d_xm.append(clampu(3.5 * x * x * 100))
+    d_vfe.append(clampu(9.0 * x * 10)); d_vfl.append(clampu(4.0 * x * x * 100))
+L.append("/* display: LFO rate Hz x100; times in us; cutoff and HPF Hz x100; arp rate Hz x10; depths in octaves x100 (VCF env x10) */")
+for nm, t in (("LFO", d_lfo), ("DLY", d_dly), ("ATT", d_att), ("DEC", d_dec), ("POR", d_por), ("RIS", d_ris), ("CUT", d_cut),
+              ("HPF", d_hpf), ("ARP", d_arp), ("VLO", d_vlo), ("VEO", d_veo), ("XM", d_xm), ("VFE", d_vfe), ("VFL", d_vfl)):
+    L.append(arr("JU_D_" + nm, "uint32_t", t))
+
 text = "\n".join(L)
 out = sys.argv[1] if len(sys.argv) > 1 else "firmware/src/ju_tables.h"
 open(out, "w").write(text)
