@@ -93,6 +93,48 @@ static void master_boot(void)
     }
 }
 
+/* The button LEDs: the page shown, the Q-Link group's button, ARP on, the octave buttons when the keys are shifted. The picture is
+ * built off-line and copied one byte a column: clearing and relighting would let the 10 kHz scan catch the dark gap and flicker. */
+static uint8_t led_pos[41];                            /* (col << 3) | row bit, 0xFF = none */
+static void ju_led_init(void)
+{
+    uint32_t id, p, r;
+    for (id = 0; id < 41u; id++) {
+        led_pos[id] = 0xFF;
+        for (p = 0; p < FM1_NCOL; p++)
+            for (r = 1; r < 5u; r++)
+                if (FM1_KEYMAP[r][p] == (int8_t)id) led_pos[id] = (uint8_t)((p << 3) | r);
+    }
+}
+static void ju_led_put(uint8_t *nl, int label)
+{
+    uint8_t q = led_pos[PANEL_BTN[label]];
+    if (q != 0xFF) nl[q >> 3] |= (uint8_t)(1u << (q & 7u));
+}
+static void ju_leds(void)
+{
+    uint8_t nl[FM1_NCOL];
+    uint32_t c;
+    for (c = 0; c < FM1_NCOL; c++) nl[c] = 0;
+    switch (ui.page) {
+    case PAGE_PANEL: ju_led_put(nl, B_EDIT); break;
+    case PAGE_PERF: ju_led_put(nl, B_GLO); break;
+    case PAGE_FX: ju_led_put(nl, B_FX); break;
+    case PAGE_PATCH: ju_led_put(nl, B_SAVE); break;
+    default:
+        ju_led_put(nl, B_HOME);
+        if (ui.qgroup == 2 || ui.qgroup == 3) ju_led_put(nl, B_ENV);
+        else if (ui.qgroup == 5) ju_led_put(nl, B_LFO);
+        else if (ui.qgroup == 4) ju_led_put(nl, B_SEQ);
+        else if (ui.qgroup == 7) ju_led_put(nl, B_SCL);
+        break;
+    }
+    if (ju_global[G_ARP_ON]) ju_led_put(nl, B_ARP);
+    if (ui.page == PAGE_PATCH) { ju_led_put(nl, B_OCTUP); if (ui.write_mode) ju_led_put(nl, B_OCTDN); }
+    else { if (ju_octave < 0) ju_led_put(nl, B_OCTDN); if (ju_octave > 0) ju_led_put(nl, B_OCTUP); }
+    for (c = 0; c < FM1_NCOL; c++) fm1_led[c] = nl[c];
+}
+
 /* the panel into the UI's input: knobs, the three big encoders, the button edges */
 static void ju_gather(ju_in_t *in)
 {
@@ -118,6 +160,7 @@ static void fm1_main(void)
     ju_boot_flash();
     fm1_input_init();
     fm1_adc_init();
+    ju_led_init();
     lcd_init();
     memset(cv_hash, 0xFF, sizeof cv_hash);
     felucca_dbg.boots++;
@@ -181,6 +224,7 @@ static void fm1_main(void)
             if (ju_pc_idx[i] >= 0) { ui.patch_idx[i] = ju_pc_idx[i]; ju_pc_idx[i] = -1; }
         ui_update(&in, now);
         ui.cpu = (uint8_t)(ju_cpu_q8 * 100u / 256u);
+        ju_leds();
         if (now - last_draw >= 40u || in.press || in.knob[0] || in.knob[1] || in.knob[2] || in.knob[3] || in.sel || in.algo || in.preset) {
             cv_present(ui_draw);
             last_draw = now;
