@@ -30,23 +30,28 @@ extern uint8_t ju_global[G_COUNT];
 static const int kRate = 44100;
 struct Result { double rmsRef, rmsFx, snr, peak; };
 
-// scen 0: dry voices, whole keyboard; 1: arpeggiator (up, 2 octaves); 2: DUAL with two patches, Lower left / Upper right
+// scen 3: the patch with its effects, same notes (pads with chorus and reverb, delays);  1: arpeggiator (up, 2 octaves); 2: DUAL with two patches, Lower left / Upper right
 static Result run(int idx, std::vector<float>* dump, int scen = 0) {
     j8::Patch bank[64];
     j8::applyFactory(bank, 64);
     auto* ref = new j8::Engine();
     ref->init((float)kRate);
     hostFxInit(*ref, (float)kRate);
+    if (scen == 3) {      // the same delay memory as the firmware has
+        auto a = [](int n) { return (int16_t*)calloc((size_t)n, 2); };
+        ref->fx.init((float)kRate, a(26000), a(26000), 26000, a(30000), a(30000), 30000, a(29600), 29600);
+    }
     ref->global[j8::G_KEYMODE] = j8::KM_WHOLE;
     ref->global[j8::G_VINTAGE] = 0;
     ref->patch[0] = bank[idx];
     if (scen == 2) { ref->patch[1] = bank[(idx + 9) % 64]; j8::fxDefaults(ref->patch[1].fx); ref->global[j8::G_KEYMODE] = j8::KM_DUAL; ref->stereoLayers = true; }
     if (scen == 1) { ref->global[j8::G_ARP_ON] = 1; ref->global[j8::G_ARP_RATE] = 150; ref->global[j8::G_ARP_RANGE] = 1; }
-    j8::fxDefaults(ref->patch[0].fx);   // the fixed engine has no effects yet: compare the dry voices
+    if (scen != 3) j8::fxDefaults(ref->patch[0].fx);   // dry voices; scenario 3 keeps the patch's effects
     ju_init();
     ju_global[G_KEYMODE] = KM_WHOLE;
     ju_global[G_VINTAGE] = 0;
     ju_patch[0] = JU_PRESETS[idx];
+    if (scen != 3) ju_fx_defaults(&ju_patch[0].fx);      // dry, like the reference above
     if (scen == 2) { ju_patch[1] = JU_PRESETS[(idx + 9) % 64]; ju_global[G_KEYMODE] = KM_DUAL; ju_stereo_layers = 1; }
     if (scen == 1) { ju_global[G_ARP_ON] = 1; ju_global[G_ARP_RATE] = 150; ju_global[G_ARP_RANGE] = 1; }
     ju_set_phase_seed();
@@ -127,6 +132,19 @@ int main(int argc, char** argv) {
         if (r.snr < minSnr) minSnr = r.snr;
     }
     printf("worst SNR %.1f dB, %d failing\n", minSnr, fails);
+    {   // the patches that have effects: the whole chain, voices to output
+        int shown = 0;
+        for (int i = 0; i < 64; i++) {
+            const ju_patch_t& p = JU_PRESETS[i];
+            if (!p.fx.mfxOn && !p.fx.dlyOn && !p.fx.revOn) continue;
+            Result r = run(i, nullptr, 3);
+            double dbd = (r.rmsRef > 1e-9 && r.rmsFx > 1e-9) ? 20 * log10(r.rmsFx / r.rmsRef) : -99;
+            bool bad = r.rmsRef > 1e-4 && (r.rmsFx < 1e-5 || fabs(dbd) > 1.5 || r.snr < 5.0);
+            if (bad || shown++ < 6) printf("fx   %d%d  %-12s %9.5f %9.5f %+8.2f %8.1f %s\n", i / 8 + 1, i % 8 + 1, p.name, r.rmsRef, r.rmsFx, dbd, r.snr, bad ? "  <-- FAIL" : "");
+            if (bad) fails++;
+        }
+        printf("(%d patches with effects compared; the first few shown)\n", 0 + shown);
+    }
     const int arpIdx[3] = {20, 8 * 5 + 2, 8 * 3 + 0};   // pad, lead, brass
     for (int scen = 1; scen <= 2; scen++)
         for (int i : arpIdx) {

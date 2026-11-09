@@ -74,6 +74,8 @@ static uint8_t ju_modwheel[2];
 static uint8_t ju_last_keymode = 255, ju_last_hold[2], ju_last_assign[2] = {255, 255};
 static uint32_t ju_age_counter;
 static int ju_next_voice[2];
+static int32_t ju_fx_tail;                          /* blocks the effects keep running after the last one is switched off */
+static uint8_t ju_fx_run;                           /* this block goes through the effects */
 uint8_t ju_stereo_layers;                           /* 1: in Dual / Split, Lower left and Upper right */
 static int8_t ju_arp_keys[16];                      /* the arpeggiator's held keys, sorted low to high */
 static uint8_t ju_arp_down[16];
@@ -158,6 +160,9 @@ static inline int32_t ju_sine_turn(uint32_t ph)       /* cos(2 pi ph / 2^32), Q2
     int32_t a = JU_SINE[i], b = JU_SINE[i + 1];
     return a + (int32_t)(((int64_t)(b - a) * (int32_t)((ph >> 8) & 0xFFFFu)) >> 16);
 }
+
+#define FX_POOL JU_POOL
+#include "ju_fx.c"                              /* the effects share the engine's maths */
 
 /* ------------------------------------------------------------- oscillators */
 /* polyBLEP residual of a unit step around a wrap of the phase (Q24, -1..0 after the wrap, 0..1 before it) */
@@ -642,6 +647,8 @@ void ju_init(void)
         v->lfoGain = 65536;
     }
     ju_refresh_layers();
+    ju_fx_init();
+    ju_fx_tail = 0;
 }
 
 /* ------------------------------------------------------------- per block */
@@ -737,6 +744,7 @@ void ju_prepare_block(void)
     ju_arp_tick();
     ju_update_layer(0);
     ju_update_layer(1);
+    ju_fx_control(&ju_patch[0].fx, 40 + ju_global[G_TEMPO]);
 }
 
 /* ------------------------------------------------------------- one voice */
@@ -961,17 +969,32 @@ void ju_finish(const int32_t *upper, const int32_t *lower, int32_t *out)
     const int32_t vol = (int32_t)ju_global[G_VOLUME] * 257;                 /* Q16 */
     const int32_t gu = ju_mulq(ju_mulq(vol, (int32_t)ju_global[G_BAL_U] * 257, 16), 39322, 16);   /* x 0.6 */
     const int32_t gl = ju_mulq(ju_mulq(vol, (int32_t)ju_global[G_BAL_L] * 257, 16), 39322, 16);
+    const ju_fxpatch_t *f = &ju_patch[0].fx;
     int i;
-    const int split = ju_stereo_layers && ju_global[G_KEYMODE] != KM_WHOLE;
-    for (i = 0; i < JU_BLOCK; i++) {
-        int32_t uu = ju_mulq(upper[i], gu, 16), dd = ju_mulq(lower[i], gl, 16);
-        if (split) {                                    /* Lower left, Upper right */
-            out[2 * i] = ju_sat(dd) >> 9;
-            out[2 * i + 1] = ju_sat(uu) >> 9;
-        } else {
-            int32_t m = ju_sat(uu + dd) >> 9;
-            out[2 * i] = m;
-            out[2 * i + 1] = m;
+    const int anyFx = f->mfxOn || f->dlyOn || f->revOn || ju_fx_tail > 0;
+    if (f->mfxOn || f->dlyOn || f->revOn) ju_fx_tail = (int32_t)(45.0 * 44100.0 / JU_BLOCK);   /* the effects finish ringing out and clear themselves */
+    else if (ju_fx_tail > 0) ju_fx_tail--;
+    ju_fx_run = (uint8_t)anyFx;
+    if (anyFx) {                                       /* the mix is mono into the effects, which make the stereo */
+        int32_t mono[JU_BLOCK], L[JU_BLOCK], R[JU_BLOCK];
+        for (i = 0; i < JU_BLOCK; i++) mono[i] = ju_mulq(upper[i], gu, 16) + ju_mulq(lower[i], gl, 16);
+        ju_fx_reverb_block();
+        ju_fx_process(mono, L, R);
+        for (i = 0; i < JU_BLOCK; i++) { out[2 * i] = ju_sat(L[i]) >> 9; out[2 * i + 1] = ju_sat(R[i]) >> 9; }
+        return;
+    }
+    {
+        const int split = ju_stereo_layers && ju_global[G_KEYMODE] != KM_WHOLE;
+        for (i = 0; i < JU_BLOCK; i++) {
+            int32_t uu = ju_mulq(upper[i], gu, 16), dd = ju_mulq(lower[i], gl, 16);
+            if (split) {                                /* Lower left, Upper right */
+                out[2 * i] = ju_sat(dd) >> 9;
+                out[2 * i + 1] = ju_sat(uu) >> 9;
+            } else {
+                int32_t m = ju_sat(uu + dd) >> 9;
+                out[2 * i] = m;
+                out[2 * i + 1] = m;
+            }
         }
     }
 }

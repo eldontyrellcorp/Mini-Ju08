@@ -14,6 +14,8 @@ D="$REF/src/dsp/engine.cpp $REF/src/dsp/params.cpp $REF/src/dsp/presets.cpp $REF
 g++ -std=c++17 -O2 -ffast-math -w -I$REF/src -I$REF/host -I. -I../firmware/src ju_test.cpp out/ju_dsp.o out/ju_fxdef.o out/ju_pinfo.o $D -o out/ju_test
 rc=0
 ./out/ju_test "$@" || rc=1
+g++ -std=c++17 -O2 -ffast-math -w -I$REF/src -I../firmware/src ju_fx_test.cpp out/ju_dsp.o out/ju_fxdef.o out/ju_pinfo.o $D -o out/ju_fx_test
+./out/ju_fx_test || rc=1
 gcc -std=c11 -O1 -g -fsanitize=undefined,address -fno-sanitize-recover=undefined -I../firmware/src ju_fuzz.c ../firmware/src/ju_dsp.c ../firmware/src/ju_fxdef.c -o out/ju_fuzz
 ./out/ju_fuzz 200 || rc=1
 gcc -std=gnu11 -O1 -g -fsanitize=undefined,address -Wall -Wno-unused-function -I../firmware/src ju_ui_test.c ../firmware/src/ju_dsp.c ../firmware/src/ju_fxdef.c ../firmware/src/ju_pinfo.c -o out/ju_ui_test
