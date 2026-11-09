@@ -49,7 +49,7 @@ SDK_SHA256 = {
     "cfg/eq_cfg_hw.bin": "41167491bffed4651750719c973d2758adeb9021a5670d02d6a53c85ed80ea7d",
 }
 
-MAIN = os.environ.get("FW_MAIN", "felucca.c")   # the top-level source: felucca.c (Mini-Tone) or ju08.c (the Jupiter-8)
+MAIN = os.environ.get("FW_MAIN", "ju08.c")   # the top-level source: ju08.c (the Jupiter-8; default) or felucca.c (Mini-Tone, kept for reference)
 PRODUCT = "FM-1_900"                # package identity; release builds are FM-1_9XY
 VERSION = None                      # FELUCCA_VERSION for release builds (default: firmware/src/felucca.c)
 

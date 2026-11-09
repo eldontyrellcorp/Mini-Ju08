@@ -1,5 +1,9 @@
 # Mini-Ju08: porting the Jupiter-8 synth (jupiter8_esp32) to the M-VAVE FM-1
 
+**Status (see README.md for the user view):** steps 1-4 below are done and tested on the host; the arpeggiator, stereo layers, all effects
+and the panel are in. What remains is everything that needs the device: the real CPU cost, listening, and the web editor / update entry
+(`FELUCCA_OTA=0` in `ju08.c`: Mini-Tone's OTA and editor are not included). The scope decisions below were the plan; "milestone 1" was extended to the full port on request.
+
 Base: Mini-Tone 1.0.5 (GPL-3.0, itself from Felucca). Source of the synth and UI: `~/jupiter8_esp32` (ESP32-S3).
 
 ## Decisions (agreed)
