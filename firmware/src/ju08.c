@@ -42,6 +42,11 @@
 #define HALF_FRAMES 128              /* I2S half buffer: 2.9 ms */
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 
+#define JU_POOL __attribute__((section(".pool")))   /* ju_dsp.c: the bank goes in the pool */
 #include "libc.c"
 #include "lcd.c"
 #include "usb.c"
+#if FELUCCA_UART
+#include "midi_uart.c"
+#endif
+#include "ju_main.c"

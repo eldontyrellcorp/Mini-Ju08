@@ -56,6 +56,12 @@ typedef struct {
 typedef struct { int8_t note; uint8_t down; } ju_held_t;
 
 ju_patch_t ju_patch[2];
+#ifndef JU_POOL
+#define JU_POOL                                     /* the firmware puts the big buffers in its pool section */
+#endif
+ju_patch_t ju_bank[64] JU_POOL;                             /* the 64 patches the panel loads from (the firmware: RAM copy of the flash banks) */
+volatile uint8_t ju_panic_req;                      /* all notes off at the next block (the PLAY button) */
+volatile uint8_t ju_load_req[2];                    /* a patch to load into a part at the next block: index + 1 (the UI and MIDI ask, the audio applies) */
 uint8_t ju_global[G_COUNT];
 static ju_voice_t ju_v[JU_NV];
 static ju_layer_t ju_ctl[2];
@@ -494,9 +500,8 @@ int ju_part_mask(uint8_t ch)
     return (ch == 0xFF || u) ? 3 : 0;
 }
 
-void ju_note_on(uint8_t ch, uint8_t note)
+void ju_note_on_m(int mask, uint8_t note)
 {
-    int mask = ju_part_mask(ch);
     if (!mask) return;
     if (ju_global[G_KEYMODE] != KM_2PART) {
         if (ju_arp_owns_key(note)) { ju_arp_add(note); return; }
@@ -511,9 +516,10 @@ void ju_note_on(uint8_t ch, uint8_t note)
     if (mask & 2) ju_layer_key_down(1, note);
 }
 
-void ju_note_off(uint8_t ch, uint8_t note)
+void ju_note_on(uint8_t ch, uint8_t note) { ju_note_on_m(ju_part_mask(ch), note); }
+
+void ju_note_off_m(int mask, uint8_t note)
 {
-    int mask = ju_part_mask(ch);
     if (!mask) return;
     if (ju_global[G_KEYMODE] != KM_2PART) {
         if (ju_arp_owns_key(note)) { ju_arp_remove(note); return; }
@@ -527,6 +533,8 @@ void ju_note_off(uint8_t ch, uint8_t note)
     if (mask & 1) { if (ju_arp_enabled()) ju_arp_remove(note); else ju_layer_key_up(0, note); }
     if (mask & 2) ju_layer_key_up(1, note);
 }
+
+void ju_note_off(uint8_t ch, uint8_t note) { ju_note_off_m(ju_part_mask(ch), note); }
 
 void ju_bend(uint8_t ch, int v14)                 /* -8192..8191 */
 {
@@ -625,7 +633,7 @@ void ju_init(void)
     for (i = 0; i < JU_NV; i++) {
         ju_voice_t *v = &ju_v[i];
         v->tolP1 = kP1[i & 7]; v->tolP2 = kP2[i & 7]; v->tolCut = kC[i & 7]; v->invTolEnv = kE[i & 7];
-        v->rng = 0x12345u * (uint32_t)(i + 1) + 77u;
+        v->rng = 0x9E3779B1u * (uint32_t)(i + 1) + 77u;
         v->ph1 = (uint32_t)i * (uint32_t)(0.137 * 4294967296.0);
         v->ph2 = (uint32_t)i * (uint32_t)(0.291 * 4294967296.0);
         v->st1 = v->st2 = 3;
@@ -696,6 +704,13 @@ static void ju_update_layer(int l)
 void ju_prepare_block(void)
 {
     int l, km = ju_global[G_KEYMODE];
+    if (ju_panic_req) { ju_panic_req = 0; ju_all_notes_off(); }
+    for (l = 0; l < 2; l++)
+        if (ju_load_req[l]) {
+            uint8_t i = (uint8_t)(ju_load_req[l] - 1u);
+            ju_load_req[l] = 0;
+            if (i < 64) ju_patch[l] = ju_bank[i];
+        }
     if (km != ju_last_keymode) {
         ju_all_notes_off();
         ju_last_keymode = (uint8_t)km;
@@ -969,5 +984,22 @@ void ju_set_phase_seed(void)                         /* the host test: the float
     for (i = 0; i < JU_NV; i++) {
         ju_v[i].ph1 = (uint32_t)i * (uint32_t)(0.137 * 4294967296.0);
         ju_v[i].ph2 = (uint32_t)i * (uint32_t)(0.291 * 4294967296.0);
+        ju_v[i].rng = 74565u * (uint32_t)(i + 1) + 77u;       /* the float engine's noise seed: the same noise */
     }
+}
+
+/* ENV-2 level of a voice, Q30 (0 when it is not sounding): the panel's voice LEDs */
+int32_t ju_voice_level(int i) { return ju_v[i].active ? ju_v[i].env2 : 0; }
+int ju_voice_gate(int i) { return ju_v[i].gate; }
+
+/* Overload: fade one voice out. The quietest released voice goes first, then the oldest held one. */
+void ju_shed_voice(void)
+{
+    int i, best = -1;
+    for (i = 0; i < JU_NV; i++)
+        if (ju_v[i].active && !ju_v[i].gate && (best < 0 || ju_v[i].env2 < ju_v[best].env2)) best = i;
+    if (best < 0)
+        for (i = 0; i < JU_NV; i++)
+            if (ju_v[i].active && ju_v[i].gate && (best < 0 || ju_v[i].age < ju_v[best].age)) best = i;
+    if (best >= 0) { ju_v[best].gate = 0; ju_v[best].st1 = ju_v[best].st2 = 3; ju_v[best].env2 >>= 2; }
 }

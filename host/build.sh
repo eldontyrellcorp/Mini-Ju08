@@ -16,4 +16,8 @@ rc=0
 ./out/ju_test "$@" || rc=1
 gcc -std=c11 -O1 -g -fsanitize=undefined,address -fno-sanitize-recover=undefined -I../firmware/src ju_fuzz.c ../firmware/src/ju_dsp.c ../firmware/src/ju_fxdef.c -o out/ju_fuzz
 ./out/ju_fuzz 200 || rc=1
+gcc -std=gnu11 -O1 -g -fsanitize=undefined,address -Wall -Wno-unused-function -I../firmware/src ju_ui_test.c ../firmware/src/ju_dsp.c ../firmware/src/ju_fxdef.c ../firmware/src/ju_pinfo.c -o out/ju_ui_test
+./out/ju_ui_test || rc=1
+gcc -std=gnu11 -O1 -Wall -Wno-unused-function -I../firmware/src ju_ui_snap.c ../firmware/src/ju_dsp.c ../firmware/src/ju_fxdef.c ../firmware/src/ju_pinfo.c -o out/ju_ui_snap
+mkdir -p out/ui && ./out/ju_ui_snap out/ui > /dev/null
 exit $rc
