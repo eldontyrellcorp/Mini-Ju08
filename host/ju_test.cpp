@@ -17,6 +17,7 @@ void ju_note_on(uint8_t, uint8_t);
 void ju_note_off(uint8_t, uint8_t);
 void ju_set_phase_seed(void);
 extern ju_patch_t ju_patch[2];
+extern uint8_t ju_stereo_layers;
 extern uint8_t ju_global[G_COUNT];
 }
 #include "ju_presets.h"
@@ -24,7 +25,8 @@ extern uint8_t ju_global[G_COUNT];
 static const int kRate = 44100;
 struct Result { double rmsRef, rmsFx, snr, peak; };
 
-static Result run(int idx, std::vector<float>* dump) {
+// scen 0: dry voices, whole keyboard; 1: arpeggiator (up, 2 octaves); 2: DUAL with two patches, Lower left / Upper right
+static Result run(int idx, std::vector<float>* dump, int scen = 0) {
     j8::Patch bank[64];
     j8::applyFactory(bank, 64);
     auto* ref = new j8::Engine();
@@ -33,11 +35,15 @@ static Result run(int idx, std::vector<float>* dump) {
     ref->global[j8::G_KEYMODE] = j8::KM_WHOLE;
     ref->global[j8::G_VINTAGE] = 0;
     ref->patch[0] = bank[idx];
+    if (scen == 2) { ref->patch[1] = bank[(idx + 9) % 64]; j8::fxDefaults(ref->patch[1].fx); ref->global[j8::G_KEYMODE] = j8::KM_DUAL; ref->stereoLayers = true; }
+    if (scen == 1) { ref->global[j8::G_ARP_ON] = 1; ref->global[j8::G_ARP_RATE] = 150; ref->global[j8::G_ARP_RANGE] = 1; }
     j8::fxDefaults(ref->patch[0].fx);   // the fixed engine has no effects yet: compare the dry voices
     ju_init();
     ju_global[G_KEYMODE] = KM_WHOLE;
     ju_global[G_VINTAGE] = 0;
     ju_patch[0] = JU_PRESETS[idx];
+    if (scen == 2) { ju_patch[1] = JU_PRESETS[(idx + 9) % 64]; ju_global[G_KEYMODE] = KM_DUAL; ju_stereo_layers = 1; }
+    if (scen == 1) { ju_global[G_ARP_ON] = 1; ju_global[G_ARP_RATE] = 150; ju_global[G_ARP_RANGE] = 1; }
     ju_set_phase_seed();
 
     const int notes[4] = {45 + (idx / 8) * 3, 52 + (idx / 8) * 3, 57 + (idx / 8) * 3, 60 + (idx / 8) * 3};
@@ -51,14 +57,15 @@ static Result run(int idx, std::vector<float>* dump) {
         int32_t fu[32] = {0}, fl[32] = {0}, out[64];
         ju_prepare_block(); ju_render(fu, fl); ju_finish(fu, fl, out);
         for (int k = 0; k < 32; k++) {
-            double r = L[k], x = out[2 * k] / 32768.0;
-            eRef += r * r; eFx += x * x; eDiff += (r - x) * (r - x);
+            double r = L[k], x = out[2 * k] / 32768.0, r2 = R[k], x2 = out[2 * k + 1] / 32768.0;
+            eRef += r * r + r2 * r2; eFx += x * x + x2 * x2; eDiff += (r - x) * (r - x) + (r2 - x2) * (r2 - x2);
             if (fabs(x) > peak) peak = fabs(x);
+            if (fabs(x2) > peak) peak = fabs(x2);
             if (dump) { dump->push_back((float)r); dump->push_back((float)x); }
         }
     }
     delete ref;
-    double n = (double)blocks * 32;
+    double n = (double)blocks * 64;
     return {sqrt(eRef / n), sqrt(eFx / n), eDiff > 0 ? 10 * log10(eRef / eDiff) : 99.0, peak};
 }
 
@@ -75,6 +82,15 @@ int main(int argc, char** argv) {
         if (r.snr < minSnr) minSnr = r.snr;
     }
     printf("worst SNR %.1f dB, %d failing\n", minSnr, fails);
+    const int arpIdx[3] = {20, 8 * 5 + 2, 8 * 3 + 0};   // pad, lead, brass
+    for (int scen = 1; scen <= 2; scen++)
+        for (int i : arpIdx) {
+            Result r = run(i, nullptr, scen);
+            double dbd = (r.rmsRef > 1e-9 && r.rmsFx > 1e-9) ? 20 * log10(r.rmsFx / r.rmsRef) : -99;
+            bool bad = r.rmsRef > 1e-4 && (r.rmsFx < 1e-5 || fabs(dbd) > 3.0 || r.snr < 8.0);
+            printf("%s  %-12s %9.5f %9.5f %+8.2f %8.1f %s\n", scen == 1 ? "arp  " : "stereo", JU_PRESETS[i].name, r.rmsRef, r.rmsFx, dbd, r.snr, bad ? "  <-- FAIL" : "");
+            if (bad) fails++;
+        }
     if (argc > 1) {   // dump one patch: ref and fixed interleaved, float32
         std::vector<float> d; run(atoi(argv[1]), &d);
         FILE* f = fopen("ju_dump.f32", "wb"); fwrite(d.data(), 4, d.size(), f); fclose(f);

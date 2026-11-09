@@ -67,7 +67,7 @@ def log2coef(tau):
 
 
 # ---- the 256-value mappings of params.cpp
-att, dec, porta, lfo_inc, lfo_dly, rise = [], [], [], [], [], []
+att, dec, porta, lfo_inc, lfo_dly, rise, arp = [], [], [], [], [], [], []
 res, vlo, veo, vfe, vfl, xm, v2t, hpf = [], [], [], [], [], [], [], []
 for v in range(256):
     x = n(v)
@@ -80,6 +80,7 @@ for v in range(256):
     lfo_inc.append(clampu(0.05 * 2 ** (9.6439 * x) * DT * (1 << 32)))
     dly = 4.0 * x * x
     lfo_dly.append(65536 if dly <= 1e-4 else min(65536, q(DT / dly, 16)))
+    arp.append(clampu(2 ** (4.3219 * x) * DT * (1 << 32)))      # mapArpRate: 1 - 20 Hz
     rs = 5.0 * x * x
     rise.append(65536 if rs <= 0.001 else min(65536, q(DT / rs, 16)))
     res.append(q(3.85 * x * (0.35 + 0.65 * x), 24))
@@ -97,6 +98,7 @@ L.append("/* LFO phase increment per block (full turn = 2^32); delay and mod-ris
 L.append(arr("JU_LFO_INC", "uint32_t", lfo_inc))
 L.append(arr("JU_LFO_DLY", "uint32_t", lfo_dly))
 L.append(arr("JU_RISE", "uint32_t", rise))
+L.append(arr("JU_ARP_INC", "uint32_t", arp))
 L.append("/* resonance k (Q24); modulation depths and the VCO-2 fine tune in octaves (Q16) */")
 L.append(arr("JU_RES", "int32_t", res))
 L.append(arr("JU_VCO_LFO", "int32_t", vlo))

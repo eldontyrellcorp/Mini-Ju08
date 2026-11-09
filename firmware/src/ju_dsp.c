@@ -68,6 +68,13 @@ static uint8_t ju_modwheel[2];
 static uint8_t ju_last_keymode = 255, ju_last_hold[2], ju_last_assign[2] = {255, 255};
 static uint32_t ju_age_counter;
 static int ju_next_voice[2];
+uint8_t ju_stereo_layers;                           /* 1: in Dual / Split, Lower left and Upper right */
+static int8_t ju_arp_keys[16];                      /* the arpeggiator's held keys, sorted low to high */
+static uint8_t ju_arp_down[16];
+static int ju_arp_n, ju_arp_pos, ju_arp_dir = 1;
+static int8_t ju_arp_sounding = -1;
+static uint8_t ju_arp_gate, ju_last_arp_on;
+static uint32_t ju_arp_phase;
 
 /* ------------------------------------------------------------------ maths */
 static inline int32_t ju_mulq(int32_t a, int32_t b, int sh) { return (int32_t)(((int64_t)a * b) >> sh); }
@@ -235,6 +242,7 @@ static void ju_refresh_layers(void)
     }
 }
 
+static void ju_arp_clear(void);
 static void ju_release_voice(ju_voice_t *v) { v->gate = 0; v->st1 = 3; v->st2 = 3; }
 
 static void ju_all_notes_off(void)
@@ -242,6 +250,7 @@ static void ju_all_notes_off(void)
     int i;
     for (i = 0; i < JU_NV; i++) { ju_v[i].gate = 0; ju_v[i].st1 = 3; ju_v[i].st2 = 3; }
     ju_nheld[0] = ju_nheld[1] = 0;
+    ju_arp_clear();
 }
 
 static void ju_trigger(ju_voice_t *v, int note, int glide)
@@ -379,6 +388,98 @@ static void ju_part_off(int l)
     for (i = 0; i < nv; i++)
         if (ju_v[first + i].gate) ju_release_voice(&ju_v[first + i]);
     ju_nheld[l] = 0;
+    if (l == 0) ju_arp_clear();
+}
+
+/* ------------------------------------------------------------ arpeggiator */
+static int ju_arp_enabled(void) { return ju_global[G_ARP_ON] != 0; }
+static int ju_arp_owns_key(int note)
+{
+    if (!ju_arp_enabled()) return 0;
+    if (ju_global[G_KEYMODE] == KM_SPLIT) return note < ju_global[G_SPLIT];     /* the arpeggio plays the lower zone */
+    return 1;
+}
+static void ju_arp_add(int note)
+{
+    int i;
+    for (i = 0; i < ju_arp_n; i++) if (ju_arp_keys[i] == note) { ju_arp_down[i] = 1; return; }
+    if (ju_arp_n >= 16) return;
+    i = ju_arp_n++;
+    while (i > 0 && ju_arp_keys[i - 1] > note) { ju_arp_keys[i] = ju_arp_keys[i - 1]; ju_arp_down[i] = ju_arp_down[i - 1]; i--; }
+    ju_arp_keys[i] = (int8_t)note;
+    ju_arp_down[i] = 1;
+}
+static void ju_arp_remove(int note)
+{
+    int i, j;
+    int holding = ju_sustain[0] || ju_global[G_HOLD_U] || ju_global[G_HOLD_L];
+    for (i = 0; i < ju_arp_n; i++) {
+        if (ju_arp_keys[i] != note) continue;
+        if (holding) { ju_arp_down[i] = 0; return; }
+        for (j = i; j + 1 < ju_arp_n; j++) { ju_arp_keys[j] = ju_arp_keys[j + 1]; ju_arp_down[j] = ju_arp_down[j + 1]; }
+        ju_arp_n--;
+        return;
+    }
+}
+static int ju_arp_next(void)
+{
+    int span = ju_arp_n * (ju_global[G_ARP_RANGE] + 1), idx;
+    if (span <= 0) return -1;
+    switch (ju_global[G_ARP_MODE]) {
+    case ARP_UP:   ju_arp_pos = (ju_arp_pos + 1) % span; idx = ju_arp_pos; break;
+    case ARP_DOWN: ju_arp_pos = (ju_arp_pos + span - 1) % span; idx = ju_arp_pos; break;
+    case ARP_UPDOWN:
+        if (span == 1) ju_arp_pos = 0;
+        else {
+            ju_arp_pos += ju_arp_dir;
+            if (ju_arp_pos >= span) { ju_arp_pos = span - 2; ju_arp_dir = -1; }
+            else if (ju_arp_pos < 0) { ju_arp_pos = 1; ju_arp_dir = 1; }
+        }
+        idx = ju_arp_pos;
+        break;
+    default: idx = (int)(ju_rand(&ju_lfo_rng) % (uint32_t)span); break;
+    }
+    if (idx >= span) idx = span - 1;
+    return ju_arp_keys[idx % ju_arp_n] + 12 * (idx / ju_arp_n);
+}
+static void ju_arp_play(int note, int on)
+{
+    int km = ju_global[G_KEYMODE], a = 0, b = 0, l, i, j;
+    if (km == KM_DUAL) { a = 0; b = 1; } else if (km == KM_SPLIT) { a = 1; b = 1; }
+    for (l = a; l <= b; l++) {
+        if (on) { ju_layer_key_down(l, note); continue; }
+        for (i = 0; i < ju_nheld[l]; i++)
+            if (ju_held[l][i].note == note) {
+                for (j = i; j + 1 < ju_nheld[l]; j++) ju_held[l][j] = ju_held[l][j + 1];
+                ju_nheld[l]--;
+                break;
+            }
+        ju_layer_release(l, note);
+    }
+}
+static void ju_arp_clear(void) { ju_arp_n = 0; ju_arp_sounding = -1; ju_arp_gate = 0; }
+static void ju_arp_tick(void)
+{
+    uint32_t old;
+    int wrapped;
+    if (!ju_arp_enabled()) {
+        if (ju_last_arp_on) { if (ju_arp_sounding >= 0) ju_arp_play(ju_arp_sounding, 0); ju_arp_clear(); }
+        ju_last_arp_on = 0;
+        return;
+    }
+    ju_last_arp_on = 1;
+    old = ju_arp_phase;
+    ju_arp_phase += JU_ARP_INC[ju_global[G_ARP_RATE]];
+    wrapped = ju_arp_phase < old;
+    if (ju_arp_gate && (wrapped || ju_arp_phase >= 0x80000000u)) {
+        if (ju_arp_sounding >= 0) ju_arp_play(ju_arp_sounding, 0);
+        ju_arp_sounding = -1;
+        ju_arp_gate = 0;
+    }
+    if (wrapped) {
+        int n = ju_arp_next();
+        if (n >= 0 && n < 128) { ju_arp_play(n, 1); ju_arp_sounding = (int8_t)n; ju_arp_gate = 1; }
+    }
 }
 
 /* which parts listen to a MIDI channel (0-15; 0xFF = not from MIDI): bit 0 = part 1 (Upper), bit 1 = part 2 */
@@ -398,6 +499,7 @@ void ju_note_on(uint8_t ch, uint8_t note)
     int mask = ju_part_mask(ch);
     if (!mask) return;
     if (ju_global[G_KEYMODE] != KM_2PART) {
+        if (ju_arp_owns_key(note)) { ju_arp_add(note); return; }
         switch (ju_global[G_KEYMODE]) {
         case KM_WHOLE: ju_layer_key_down(0, note); break;
         case KM_DUAL: ju_layer_key_down(0, note); ju_layer_key_down(1, note); break;
@@ -405,7 +507,7 @@ void ju_note_on(uint8_t ch, uint8_t note)
         }
         return;
     }
-    if (mask & 1) ju_layer_key_down(0, note);
+    if (mask & 1) { if (ju_arp_enabled()) ju_arp_add(note); else ju_layer_key_down(0, note); }    /* the arpeggio is part 1's */
     if (mask & 2) ju_layer_key_down(1, note);
 }
 
@@ -414,6 +516,7 @@ void ju_note_off(uint8_t ch, uint8_t note)
     int mask = ju_part_mask(ch);
     if (!mask) return;
     if (ju_global[G_KEYMODE] != KM_2PART) {
+        if (ju_arp_owns_key(note)) { ju_arp_remove(note); return; }
         switch (ju_global[G_KEYMODE]) {
         case KM_WHOLE: ju_layer_key_up(0, note); break;
         case KM_DUAL: ju_layer_key_up(0, note); ju_layer_key_up(1, note); break;
@@ -421,7 +524,7 @@ void ju_note_off(uint8_t ch, uint8_t note)
         }
         return;
     }
-    if (mask & 1) ju_layer_key_up(0, note);
+    if (mask & 1) { if (ju_arp_enabled()) ju_arp_remove(note); else ju_layer_key_up(0, note); }
     if (mask & 2) ju_layer_key_up(1, note);
 }
 
@@ -443,7 +546,11 @@ void ju_sustain_set(uint8_t ch, uint8_t v)
         if (!(mask & (1 << l))) continue;
         was = ju_sustain[l];
         ju_sustain[l] = v >= 64;
-        if (was && !ju_sustain[l] && !ju_global[l == 0 ? G_HOLD_U : G_HOLD_L]) ju_release_unheld(l);
+        if (was && !ju_sustain[l]) {
+            int i;
+            if (!ju_global[l == 0 ? G_HOLD_U : G_HOLD_L]) ju_release_unheld(l);
+            if (l == 0) for (i = ju_arp_n - 1; i >= 0; i--) if (!ju_arp_down[i]) ju_arp_remove(ju_arp_keys[i]);
+        }
     }
 }
 void ju_all_off(uint8_t ch)
@@ -511,6 +618,7 @@ void ju_init(void)
     ju_last_hold[0] = ju_last_hold[1] = 0;
     ju_next_voice[0] = ju_next_voice[1] = 0;
     ju_age_counter = 0;
+    ju_arp_clear(); ju_arp_pos = 0; ju_arp_dir = 1; ju_arp_phase = 0; ju_last_arp_on = 0; ju_stereo_layers = 0;
     ju_lfo_rng = 0x9E3779B9u;
     ju_ctl[0].first = ju_ctl[1].first = 1;
     for (i = 0; i < JU_NV; i++) {
@@ -594,7 +702,11 @@ void ju_prepare_block(void)
     }
     for (l = 0; l < 2; l++) {
         uint8_t h = ju_global[l == 0 ? G_HOLD_U : G_HOLD_L];
-        if (ju_last_hold[l] && !h && !ju_sustain[l]) ju_release_unheld(l);
+        if (ju_last_hold[l] && !h && !ju_sustain[l]) {
+            int i;
+            ju_release_unheld(l);
+            for (i = ju_arp_n - 1; i >= 0; i--) if (!ju_arp_down[i]) ju_arp_remove(ju_arp_keys[i]);
+        }
         ju_last_hold[l] = h;
         if (ju_patch[l].v[P_ASSIGN] != ju_last_assign[l]) {
             if (ju_last_assign[l] != 255 && (km != KM_WHOLE || l == 0)) {     /* the allocator starts clean */
@@ -606,6 +718,7 @@ void ju_prepare_block(void)
             ju_last_assign[l] = ju_patch[l].v[P_ASSIGN];
         }
     }
+    ju_arp_tick();
     ju_update_layer(0);
     ju_update_layer(1);
 }
@@ -833,10 +946,17 @@ void ju_finish(const int32_t *upper, const int32_t *lower, int32_t *out)
     const int32_t gu = ju_mulq(ju_mulq(vol, (int32_t)ju_global[G_BAL_U] * 257, 16), 39322, 16);   /* x 0.6 */
     const int32_t gl = ju_mulq(ju_mulq(vol, (int32_t)ju_global[G_BAL_L] * 257, 16), 39322, 16);
     int i;
+    const int split = ju_stereo_layers && ju_global[G_KEYMODE] != KM_WHOLE;
     for (i = 0; i < JU_BLOCK; i++) {
-        int32_t m = ju_sat(ju_mulq(upper[i], gu, 16) + ju_mulq(lower[i], gl, 16)) >> 9;
-        out[2 * i] = m;
-        out[2 * i + 1] = m;
+        int32_t uu = ju_mulq(upper[i], gu, 16), dd = ju_mulq(lower[i], gl, 16);
+        if (split) {                                    /* Lower left, Upper right */
+            out[2 * i] = ju_sat(dd) >> 9;
+            out[2 * i + 1] = ju_sat(uu) >> 9;
+        } else {
+            int32_t m = ju_sat(uu + dd) >> 9;
+            out[2 * i] = m;
+            out[2 * i + 1] = m;
+        }
     }
 }
 
