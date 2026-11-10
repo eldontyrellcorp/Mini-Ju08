@@ -13,6 +13,7 @@ static uint8_t flash_ok;                                /* the 1 MiB NOR answere
 #include "ju_canvas.c"
 #include "ju_midi.c"
 #include "ju_audio.c"
+#include "ju_proj.c"
 #include "ju_ui.c"
 
 /* the panel: which matrix button / encoder carries which printed label (measured on hardware by Mini-Tone) */
@@ -199,8 +200,9 @@ static void fm1_main(void)
     ju_store_boot();
     ju_store_seq_boot();
     ju_store_song_boot();
-    ju_patch[0] = ju_bank[ui.patch_idx[0]];
-    ju_patch[1] = ju_bank[ui.patch_idx[1]];
+    ju_proj_boot();
+    if (!ju_work_valid) { ju_patch[0] = ju_bank[ui.patch_idx[0]]; ju_patch[1] = ju_bank[ui.patch_idx[1]]; }
+    ui.work_sig = ju_proj_sig();
     memcpy(ui.saved_global, ju_global, G_COUNT);
     master_boot();
     kb_boot_hold = 1;

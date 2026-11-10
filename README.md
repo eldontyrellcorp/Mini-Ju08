@@ -52,7 +52,7 @@ reverb (five types and shimmer) as in the ESP32 version. See `~/jupiter8_esp32/R
 | MASTER | Volume |
 | HOME | Q-Link page; again: next group |
 | ENV / LFO / SCL | Q-Link groups: ENV-1 and ENV-2 / LFO / PLAY (the VCO group: HOME or SELECT) |
-| EDIT / GLO / FX / SAVE | EDIT: the sound controls, one section per page (LFO, VCO MOD, VCO-1, VCO-2, MIX HPF VCA, VCF, VCF 2, ENV-1, ENV-2). GLO: the performance pages (assign, key mode, arpeggio, portamento, bender, LFO mod, master, MIDI). Press EDIT or GLO again for the next page. FX: effects. SAVE: patches |
+| EDIT / GLO / FX / SAVE | EDIT: the sound controls, one section per page (LFO, VCO MOD, VCO-1, VCO-2, MIX HPF VCA, VCF, VCF 2, ENV-1, ENV-2). GLO: the performance pages (assign, key mode, arpeggio, portamento, bender, LFO mod, master, MIDI). Press EDIT or GLO again for the next page. FX: effects. SAVE: patches (again: projects) |
 | ARP | Arpeggio on / off |
 | SEQ | The sequencer; again: its setup |
 | PLAY | Start / stop the sequencer. Held 0.6 s: all notes off |
@@ -96,6 +96,14 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
   switches song mode on and off (also GLO, SEQUENCER page: SNG, and LUP for looping). With song mode on, **PLAY** plays the song from the row
   under the cursor (the header shows SNG and the row); it stops after the last row, or starts again with LUP on. Recording during a song
   overdubs into the pattern the row is playing. The song is saved in flash like the patterns.
+
+- **Projects** (SAVE twice: the Patches page, then the Projects page): 8 numbered slots P01-P08. A project is the two sounds (with their
+  effects), all 32 patterns, the song, and the musical settings (tempo, key mode and split, balance, arpeggio, portamento, the two MIDI
+  channels, song mode and loop). Nothing is saved until you ask: KNOB 1 picks the slot, **OCT+** saves into it (asks again before
+  overwriting another project), **OCT-** loads it (asks again if the current work is unsaved), **SCL** clears it (asks again). The open
+  project is marked in red, with a `*` while the working copy differs from what was saved. Saving and loading need the sequencer
+  stopped. The working copy (sounds as edited, patterns, song, settings) is also kept in flash by itself, so a power cycle brings back
+  what you were doing, whatever slot is open.
 - **PLAY** starts and stops both parts together; a part whose pattern has no note is left to the keys.
 - **Keys while it plays** (GLO, the SEQUENCER page, KEY): **PLAY** (the default) the keys sound normally over the running pattern; **TRAN** a key
   transposes the pattern instead (the key is the new root: C4 plays it as written) and does not sound. The keys play the part being edited, so

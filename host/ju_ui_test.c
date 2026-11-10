@@ -12,6 +12,7 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #define section(x)
 #include "ju_canvas.c"
 static int8_t ju_octave;
+#include "ju_proj.c"
 #include "ju_ui.c"
 static int stored_patch = -1, stored_cur;
 static void ju_store_current(void) { stored_cur++; }
@@ -20,6 +21,10 @@ static int stored_seq[2];
 static int ju_store_seq(int part) { stored_seq[part]++; return 0; }
 static int stored_song;
 static int ju_store_song(void) { stored_song++; return 0; }
+static ju_proj1_t fake1[JU_NPROJ]; static ju_proj2_t fake2[JU_NPROJ];       /* a RAM flash for the project slots */
+static int ju_proj_flash_save(int s) { ju_proj_pack(&fake1[s], &fake2[s]); ju_proj_summarize(&fake1[s], &ju_projinfo[s]); return 0; }
+static int ju_proj_flash_load(int s) { return ju_proj_unpack(&fake1[s], &fake2[s]); }
+static int ju_proj_flash_clear(int s) { memset(&fake1[s], 0, sizeof fake1[s]); ju_projinfo[s].valid = 0; return 0; }
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -272,6 +277,51 @@ int main(void)
     stored_cur = 0;
     memset(&in, 0, sizeof in); T += 3000; ui_update(&in, T);
     CHECK(stored_cur == 1 && ui.saved_global[G_VOLUME] == 150);
+
+    /* projects: save into a slot, change things, load it back (confirmations included) */
+    ju_seq_run = 0; ju_seq_rec = 0; ju_seq_req = 0;
+    ui.page = PAGE_PATCH; ui.proj_cur = -1;
+    in = press(B_SAVE); step(&in); CHECK(ui.page == PAGE_PROJ);
+    in = press(B_SAVE); step(&in); CHECK(ui.page == PAGE_PATCH);
+    in = press(B_SAVE); step(&in); CHECK(ui.page == PAGE_PROJ);
+    in = turn(0, 2); step(&in); CHECK(ui.proj_sel == 2);
+    in = turn(0, 50); step(&in); CHECK(ui.proj_sel == JU_NPROJ - 1);
+    in = turn(0, -5); step(&in); CHECK(ui.proj_sel == 2);
+    ju_patch[0] = ju_bank[3]; ju_patch[1] = ju_bank[40]; ju_song.n = 2; ju_song.row[0].pat[0] = 1; ju_song.row[0].pat[1] = JU_SONG_NONE; ju_song.row[0].rep = 3;
+    ju_pat[1][5].note[0] = 77; ju_pat[1][5].type[0] = SQ_NOTE; ju_global[G_TEMPO] = 90; ju_global[G_CH_U] = 4; ui.patch_idx[0] = 3; ui.patch_idx[1] = 40;
+    in = press(B_OCTUP); step(&in); CHECK(ui.proj_cur == 2 && ju_projinfo[2].valid && ju_projinfo[2].tempo == 90);
+    { ju_in_t z; memset(&z, 0, sizeof z); T += 300; step(&z); CHECK(!ui_proj_modified());
+    ju_patch[0].v[P_VCF_CUT] ^= 40; T += 300; step(&z); } CHECK(ui_proj_modified());      /* an edit of a sound shows */
+    in = press(B_OCTUP); step(&in); CHECK(!ui_proj_modified());                          /* the open slot is overwritten without asking */
+    ju_pat[1][5].note[0] = 12; ju_global[G_TEMPO] = 10; ju_global[G_CH_U] = 0; ju_song.n = 0; ju_patch[1] = ju_bank[0]; ui.patch_idx[1] = 0;
+    { ju_in_t z; memset(&z, 0, sizeof z); T += 300; step(&z); } CHECK(ui_proj_modified());
+    in = press(B_OCTDN); step(&in); CHECK(ui.proj_ask == 2 && ju_pat[1][5].note[0] == 12);     /* unsaved work: asked */
+    in = press(B_OCTDN); step(&in);
+    CHECK(ju_pat[1][5].note[0] == 77 && ju_global[G_TEMPO] == 90 && ju_global[G_CH_U] == 4 && ju_song.n == 2 && ju_song.row[0].rep == 3);
+    CHECK(ju_patch_stage_req == 1 && ui.patch_idx[1] == 40 && ju_panic_req == 1);
+    blocks(1); CHECK(ju_patch_stage_req == 0 && !strcmp(ju_patch[1].name, ju_bank[40].name));   /* the engine takes the sounds at its next block */
+    { ju_in_t z; memset(&z, 0, sizeof z); T += 300; step(&z); T += 300; step(&z); } CHECK(!ui_proj_modified());
+    /* a slot that holds another project is not overwritten at the first press; the sequencer running blocks both */
+    ui.proj_sel = 4; in = press(B_OCTUP); step(&in); CHECK(ui.proj_cur == 4);              /* empty slot: saved at once */
+    ui.proj_sel = 2; in = press(B_OCTUP); step(&in); CHECK(ui.proj_ask == 1 && ui.proj_cur == 4);
+    ju_seq_run = 1; in = press(B_OCTUP); step(&in); CHECK(ui.proj_cur == 4); ju_seq_run = 0;
+    in = press(B_OCTUP); step(&in); CHECK(ui.proj_cur == 4);                               /* the ask was dropped by the refusal: asks again */
+    in = press(B_OCTUP); step(&in); CHECK(ui.proj_cur == 2);
+    in = press(B_SCL); step(&in); CHECK(ju_projinfo[2].valid && ui.proj_ask == 3);
+    in = press(B_SCL); step(&in); CHECK(!ju_projinfo[2].valid && ui.proj_cur == -1);
+    ui.proj_sel = 2; in = press(B_OCTDN); step(&in); CHECK(ui.proj_msg && ui.proj_ask == 0);  /* an empty slot does not load */
+    /* a damaged slot is refused whole, and what comes in is made safe */
+    memset(&fake1[4], 0, sizeof fake1[4]); ui.proj_sel = 4; { int m = ju_pat[0][0].len; in = press(B_OCTDN); step(&in); step(&in); CHECK(ju_pat[0][0].len == m); }
+    ju_proj_pack(&fake1[1], &fake2[1]);
+    fake1[1].patch[0].v[P_VCF_CUT] = 200; fake1[1].patch[0].v[P_V1_WAVE] = 99; fake1[1].patch[0].fx.mfxType = 200; fake1[1].patch[0].fx.d[DL_TIME] = 30000;
+    fake1[1].patch[0].name[11] = 'X'; fake1[1].song.n = 200; fake1[1].song.row[3].pat[0] = 77; fake1[1].song.row[3].rep = 0; fake1[1].g[11] = 99;
+    fake2[1].pat[3].len = 0; fake2[1].pat[3].note[7] = 200; fake2[1].pat[3].type[7] = 9;
+    CHECK(ju_proj_unpack(&fake1[1], &fake2[1]) == 0);
+    CHECK(ju_patch_stage[0].v[P_V1_WAVE] < ju_psteps(P_V1_WAVE) && ju_patch_stage[0].fx.mfxType < MFX_COUNT && ju_patch_stage[0].name[11] == 0);
+    CHECK(ju_patch_stage[0].fx.d[DL_TIME] <= ju_delay_param(DL_TIME)->hi && ju_song.n <= JU_SONG_ROWS && ju_song.row[3].pat[0] == JU_SONG_NONE && ju_song.row[3].rep == 1);
+    CHECK(ju_pat[1][3].len == 16 && ju_pat[1][3].note[7] <= 127 && ju_pat[1][3].type[7] <= SQ_TIE && ju_global[G_CH_U] <= 16);
+    fake1[1].magic = 0; { uint8_t t = ju_global[G_TEMPO]; ju_global[G_TEMPO] = 77; CHECK(ju_proj_unpack(&fake1[1], &fake2[1]) == -1 && ju_global[G_TEMPO] == 77); ju_global[G_TEMPO] = t; }
+    blocks(1); ui.sig_pend = 0;
 
     /* the frame is drawn the same whether it is drawn band by band or all at once (the hash of an unchanged band is stable) */
     cv_force = 1; cv_present(ui_draw);

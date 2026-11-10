@@ -26,3 +26,4 @@ void ju_click_trig(int);
 int ju_seq_tick_phase(void);
 extern ju_song_t ju_song; extern volatile uint8_t ju_song_dirty, ju_song_row; extern uint8_t ju_song_sel;
 int ju_seq_playing_pat(int); int ju_song_playing(void);
+extern ju_patch_t ju_patch_stage[2]; extern volatile uint8_t ju_patch_stage_req;

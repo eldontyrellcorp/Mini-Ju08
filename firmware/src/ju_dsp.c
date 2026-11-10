@@ -61,6 +61,8 @@ ju_patch_t ju_patch[2];
 #endif
 ju_patch_t ju_bank[64] JU_POOL;                             /* the 64 patches the panel loads from (the firmware: RAM copy of the flash banks) */
 volatile uint8_t ju_panic_req;                      /* all notes off at the next block (the PLAY button) */
+ju_patch_t ju_patch_stage[2];                        /* the two sounds of a project the panel loaded, taken over at the next block */
+volatile uint8_t ju_patch_stage_req;
 volatile uint8_t ju_load_req[2];                    /* a patch to load into a part at the next block: index + 1 (the UI and MIDI ask, the audio applies) */
 uint8_t ju_global[G_COUNT];
 static ju_voice_t ju_v[JU_NV];
@@ -1052,6 +1054,7 @@ void ju_prepare_block(void)
 {
     int l, km = ju_global[G_KEYMODE];
     if (ju_panic_req) { ju_panic_req = 0; ju_all_notes_off(); }
+    if (ju_patch_stage_req) { ju_patch[0] = ju_patch_stage[0]; ju_patch[1] = ju_patch_stage[1]; ju_patch_stage_req = 0; }
     for (l = 0; l < 2; l++)
         if (ju_load_req[l]) {
             uint8_t i = (uint8_t)(ju_load_req[l] - 1u);

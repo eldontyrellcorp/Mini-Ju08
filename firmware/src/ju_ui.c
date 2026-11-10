@@ -30,7 +30,7 @@
 #define K_FOCUS CV_RGB(255, 196, 40)
 #define K_FOCBG CV_RGB(52, 44, 18)
 
-enum { PAGE_QLINK, PAGE_PANEL, PAGE_PERF, PAGE_FX, PAGE_PATCH, PAGE_SEQ, PAGE_COUNT };
+enum { PAGE_QLINK, PAGE_PANEL, PAGE_PERF, PAGE_FX, PAGE_PATCH, PAGE_SEQ, PAGE_PROJ, PAGE_COUNT };
 enum { B_FX, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC, B_OCTDN, B_OCTUP, NB };
 #define BTN(b) (1u << (b))
 
@@ -205,8 +205,13 @@ typedef struct {
     uint32_t play_down_at, seq_save_at, clear_at;
     uint8_t seq_lo;                     /* the lowest note the piano roll shows (it follows the cursor) */
     uint8_t song_cur;                   /* the song page's row (n: the empty row after the last) */
+    int8_t proj_cur;                    /* the project open (last saved or loaded), -1: none */
+    uint8_t proj_sel, proj_ask;         /* the project page's cursor; a confirmation asked: 0 none, 1 save, 2 load, 3 clear */
+    uint8_t sig_pend;                   /* a project was loaded: its signature is taken once the engine has its sounds */
+    uint32_t proj_sig, work_sig, sig_at, proj_msg_at;   /* signature of the open project as saved; of the working copy; when taken; when the message was set */
+    const char *proj_msg;               /* what the last save / load did, shown for a few seconds */
 } ui_t;
-static ui_t ui = {PAGE_QLINK, 0, {0, 0, 0, 0, 0}, {8, 0}, 0, 0, {0}, -1, 0, 0, 0, 0, {0}, 1, 0, 0};
+static ui_t ui = {.page = PAGE_QLINK, .patch_idx = {8, 0}, .song_cur = 0, .last_dial = -1, .overview = 1, .proj_cur = -1};
 
 static void ui_focus_on(int page, int id)
 {
@@ -222,6 +227,9 @@ static void ju_store_current(void);                       /* ju_store.c */
 static int ju_store_seq(int part);
 static int ju_store_song(void);
 static int ju_store_patch(int idx);
+static int ju_proj_flash_save(int slot);
+static int ju_proj_flash_load(int slot);
+static int ju_proj_flash_clear(int slot);
 
 static int ui_layer(void) { return ju_global[G_PANEL] & 1; }
 static int ui_focus_count(void)
@@ -677,6 +685,53 @@ static void ui_seq_input(const ju_in_t *in, uint32_t now)
     ui_seq_view();
 }
 
+/* ---- projects: 8 slots, saved and loaded only when asked. The working copy is autosaved in the settings as a safety net; the page
+ * shows whether it still equals the open project. A save over another project, a load over unsaved work and a clear ask twice. */
+static void ui_proj_msg(const char *m) { ui.proj_msg = m; ui.proj_msg_at = ui.now ? ui.now : 1u; }
+static int ui_proj_modified(void) { return ui.proj_cur < 0 || ui.work_sig != ui.proj_sig; }
+static void ui_proj_do(int op)                       /* 1 save, 2 load, 3 clear */
+{
+    int s = ui.proj_sel, ask = ui.proj_ask == op && ui.proj_msg_at && ui.now - ui.proj_msg_at < 3000u;
+    ui.proj_ask = 0;
+    if (ju_seq_run || ju_seq_rec) { ui_proj_msg("STOP THE SEQUENCER FIRST"); return; }
+    if (op == 1) {
+        if (ju_projinfo[s].valid && s != ui.proj_cur && !ask) { ui.proj_ask = 1; ui_proj_msg("OCT+ AGAIN: OVERWRITE THIS SLOT"); return; }
+        ju_proj_pidx[0] = (uint8_t)ui.patch_idx[0]; ju_proj_pidx[1] = (uint8_t)ui.patch_idx[1];
+        if (ju_proj_flash_save(s) == 0) { ui.proj_cur = (int8_t)s; ui.proj_sig = ui.work_sig = ju_proj_sig(); ju_store_current(); ui_proj_msg("SAVED"); }
+        else ui_proj_msg("SAVE FAILED");
+    } else if (op == 2) {
+        if (!ju_projinfo[s].valid) { ui_proj_msg("THIS SLOT IS EMPTY"); return; }
+        if (ui_proj_modified() && !ask) { ui.proj_ask = 2; ui_proj_msg("UNSAVED WORK: OCT- AGAIN TO LOAD"); return; }
+        if (ju_proj_flash_load(s) == 0) {
+            ui.patch_idx[0] = ju_proj_pidx[0]; ui.patch_idx[1] = ju_proj_pidx[1];
+            ui.proj_cur = (int8_t)s; ui.sig_pend = 1; ju_panic_req = 1;
+            memcpy(ui.saved_global, ju_global, G_COUNT);
+            ui.save_at = ui.now + 2000u;
+            ui_proj_msg("LOADED");
+        } else ui_proj_msg("LOAD FAILED");
+    } else {
+        if (!ju_projinfo[s].valid) { ui_proj_msg("THIS SLOT IS EMPTY"); return; }
+        if (!ask) { ui.proj_ask = 3; ui_proj_msg("SCL AGAIN: CLEAR THIS SLOT"); return; }
+        if (ju_proj_flash_clear(s) == 0) { if (s == ui.proj_cur) ui.proj_cur = -1; ui_proj_msg("CLEARED"); }
+        else ui_proj_msg("CLEAR FAILED");
+    }
+}
+/* every 250 ms: the working copy's signature (a change schedules the autosave); after a load, the project's own */
+static void ui_proj_track(uint32_t now)
+{
+    if (ui.sig_pend) {
+        if (ju_patch_stage_req) return;                 /* the engine has not taken the sounds yet */
+        ui.sig_pend = 0; ui.proj_sig = ui.work_sig = ju_proj_sig(); ui.sig_at = now;
+        return;
+    }
+    if (now - ui.sig_at < 250u) return;
+    ui.sig_at = now;
+    {
+        uint32_t h = ju_proj_sig();
+        if (h != ui.work_sig) { ui.work_sig = h; if (!ui.save_at) ui.save_at = now + 2000u; }
+    }
+}
+
 /* one UI frame of input */
 static void ui_update(const ju_in_t *in, uint32_t now)
 {
@@ -690,11 +745,12 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     }
     if (in->press & BTN(B_GLO)) { if (ui.page == PAGE_PERF) ui_jump_section(1); ui.page = PAGE_PERF; ui.write_mode = 0; }
     if (in->press & BTN(B_FX)) { if (ui.page == PAGE_FX) ui_jump_section(1); ui.page = PAGE_FX; ui.write_mode = 0; }
-    if (in->press & BTN(B_SAVE)) { ui.page = PAGE_PATCH; ui.write_mode = 0; }
+    if (in->press & BTN(B_SAVE)) { ui.page = ui.page == PAGE_PATCH ? PAGE_PROJ : PAGE_PATCH; ui.write_mode = 0; ui.proj_ask = 0; }
     if (in->press & BTN(B_ENV)) ui_group_to(ui.page == PAGE_QLINK && ui.qgroup == 2 ? 3 : 2);
     if (in->press & BTN(B_LFO)) ui_group_to(5);
     if (in->press & BTN(B_SEQ)) { if (ui.page == PAGE_SEQ) ui.seq_sub = (uint8_t)((ui.seq_sub + 1) % 3); else { ui.page = PAGE_SEQ; ui.seq_sub = 0; } ui.write_mode = 0; }
-    if ((in->press & BTN(B_SCL)) && ui.page != PAGE_SEQ) ui_group_to(7);          /* (on the SEQ page SCL clears a step) */
+    if ((in->press & BTN(B_SCL)) && ui.page == PAGE_PROJ) ui_proj_do(3);
+    else if ((in->press & BTN(B_SCL)) && ui.page != PAGE_SEQ) ui_group_to(7);          /* (on the SEQ page SCL clears a step) */
     if (in->press & BTN(B_ARP)) { ju_global[G_ARP_ON] ^= 1; ui.save_at = now + 2000u; }
     /* PLAY: a tap starts / stops the sequencer, held for 0.6 s it is all notes off */
     if (in->press & BTN(B_PLAY)) { ui.play_down_at = now ? now : 1u; ui.panic_done = 0; }
@@ -716,6 +772,9 @@ static void ui_update(const ju_in_t *in, uint32_t now)
             if (ui.clear_at && now - ui.clear_at < 2000u) { ui_seq_clear(); ui.clear_at = 0; } else ui.clear_at = now ? now : 1u;
         }
         if (ui.clear_at && now - ui.clear_at >= 2000u) ui.clear_at = 0;
+    } else if (ui.page == PAGE_PROJ) {
+        if (in->press & BTN(B_OCTUP)) ui_proj_do(1);                          /* save into the slot */
+        if (in->press & BTN(B_OCTDN)) ui_proj_do(2);                          /* load the slot */
     } else if (ui.page == PAGE_PATCH) {
         if (in->press & BTN(B_OCTUP)) ui_activate();
         if (in->press & BTN(B_OCTDN)) ui.write_mode = 0;
@@ -738,6 +797,8 @@ static void ui_update(const ju_in_t *in, uint32_t now)
         }
     } else if (ui.page == PAGE_SEQ) {
         ui_seq_input(in, now);
+    } else if (ui.page == PAGE_PROJ) {
+        if (in->knob[0]) { int v = ui.proj_sel + in->knob[0]; ui.proj_sel = (uint8_t)(v < 0 ? 0 : v >= JU_NPROJ ? JU_NPROJ - 1 : v); ui.proj_ask = 0; }
     } else {
         ui.turning_enc = 1;
         if (in->knob[0]) ui_move_focus(in->knob[0]);
@@ -751,6 +812,7 @@ static void ui_update(const ju_in_t *in, uint32_t now)
         if (in->knob[3]) ui_load_patch(l, (ui.patch_idx[l] + (in->knob[3] > 0 ? 1 : 63)) % 64);
     }
     if (ui.page == PAGE_SEQ) ui_seq_view();
+    ui_proj_track(now);
     if (ui.overview && now - ui.overview_at >= OVERVIEW_MS) ui.overview = 0;
 
     if ((ju_seq_dirty[0] || ju_seq_dirty[1] || ju_song_dirty) && !ui.seq_save_at) ui.seq_save_at = now + 2000u;
@@ -895,6 +957,28 @@ static void d_patches(void)
     cv_rect(160, 168, 70, 24, f == 64 ? K_FOCUS : (ui.write_mode ? K_RED : K_PANEL));
     cv_frame(160, 168, 70, 24, K_RED);
     cv_text(180, 177, "WRITE", f == 64 ? K_BG : K_TEXT, 1);
+}
+
+static void d_proj(void)
+{
+    int i;
+    for (i = 0; i < JU_NPROJ; i++) {
+        const ju_projinfo_t *pi = &ju_projinfo[i];
+        int y = 26 + i * 18, open = i == ui.proj_cur, sel = i == ui.proj_sel;
+        char t[4], b[28];
+        if (!cv_sees(y - 1, 19)) continue;
+        cv_rect(0, y, CV_W, 17, sel ? K_FOCBG : K_PANEL);
+        if (sel) cv_frame(0, y, CV_W, 17, K_FOCUS);
+        t[0] = 'P'; t[1] = (char)('0' + (i + 1) / 10); t[2] = (char)('0' + (i + 1) % 10); t[3] = 0;
+        cv_text(6, y + 1, t, open ? K_LEDON : K_TEXT, 2);
+        if (pi->valid) {
+            b[0] = 0; ui_strcat(b, sizeof b, pi->n0); ui_strcat(b, sizeof b, " / "); ui_strcat(b, sizeof b, pi->n1);
+            cv_text(44, y + 5, b, K_TEXT, 1);
+            b[0] = 0; ui_num(b, sizeof b, 40 + pi->tempo);
+            cv_text(CV_W - cv_text_w(b, 1) - 22, y + 5, b, K_DIM, 1);
+        } else cv_text(44, y + 5, "EMPTY", K_DIM, 1);
+        if (open) cv_text(CV_W - 14, y + 1, ui_proj_modified() ? "*" : " ", K_ORANGE, 2);
+    }
 }
 
 static void d_fx(void)
@@ -1080,6 +1164,19 @@ static void d_readout(void)
         }
         return;
     }
+    if (ui.page == PAGE_PROJ) {
+        int msg = ui.proj_msg && ui.proj_msg_at && ui.now - ui.proj_msg_at < 3000u;
+        line[0] = 0;
+        if (ui.proj_cur < 0) ui_strcat(line, sizeof line, "NO PROJECT OPEN: WORKING COPY");
+        else {
+            ui_strcat(line, sizeof line, "OPEN: P"); ui_num(line, sizeof line, ui.proj_cur + 1);
+            ui_strcat(line, sizeof line, ui_proj_modified() ? "  CHANGED (*)" : "  UNCHANGED");
+        }
+        cv_text(6, y + 6, msg ? ui.proj_msg : line, msg ? K_RED : K_TEXT, 1);
+        cv_text(6, y + 18, "KNOB 1 SLOT  OCT+ SAVE  OCT- LOAD", K_DIM, 1);
+        cv_text(6, y + 30, "SCL CLEAR  SAVE: PATCHES", K_DIM, 1);
+        return;
+    }
     if (ui.page == PAGE_PATCH) {
         const ju_patch_t *p = &ju_patch[lay];
         cv_text(6, y + 6, p->name, K_TEXT, 2);
@@ -1256,6 +1353,7 @@ static void ui_draw(void)
     case PAGE_PERF: d_perf(); break;
     case PAGE_FX: d_fx(); break;
     case PAGE_SEQ: d_seq(); break;
+    case PAGE_PROJ: d_proj(); break;
     default: d_patches(); break;
     }
     d_readout();

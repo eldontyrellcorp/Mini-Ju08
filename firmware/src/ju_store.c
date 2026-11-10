@@ -6,10 +6,13 @@
 #endif
 #define JU_PPO 23u                                   /* patches per object */
 #define JU_BANK_MAGIC 0x4A553031u                    /* "JU01" */
-#define JU_SET_MAGIC 0x4A555332u                     /* "JUS2": the global list last, any length (settings saved with fewer globals load) */
+#define JU_SET_MAGIC 0x4A555333u                     /* "JUS3": the global list last, any length (settings saved with fewer globals load) */
 #define JU_SEQ_MAGIC 0x4A535131u                     /* "JSQ1" */
 typedef struct { uint32_t magic; ju_patch_t p[JU_PPO]; } ju_bankobj_t;
-typedef struct { uint32_t magic; uint8_t cur[2]; uint8_t octave; uint8_t pad; uint8_t seqcur[2]; uint8_t pad2[2]; uint8_t global[G_COUNT]; } ju_setobj_t;
+/* the working copy: the two sounds as they are now (edits included), the open project and the signature it had when saved or loaded */
+typedef struct { uint32_t magic; uint8_t cur[2]; uint8_t octave; uint8_t proj; uint8_t seqcur[2]; uint8_t pad2[2]; uint32_t projsig;
+                 ju_patch_t patch[2]; uint8_t global[G_COUNT]; } ju_setobj_t;
+uint8_t ju_work_valid;                                /* the boot restored the working sounds */
 typedef struct { uint32_t magic; ju_pat_t p[JU_SEQ_PATS]; } ju_seqobj_t;         /* one part's 16 patterns */
 _Static_assert(sizeof(ju_bankobj_t) <= ST_PAYLOAD_MAX, "a bank object fits a storage sector");
 _Static_assert(sizeof(ju_setobj_t) <= ST_PAYLOAD_MAX, "the settings object fits a storage sector");
@@ -46,6 +49,8 @@ static void ju_store_current(void)
     so.octave = (uint8_t)(ju_octave + 3);
     memcpy(so.global, ju_global, G_COUNT);
     so.seqcur[0] = ju_seq_cur[0]; so.seqcur[1] = ju_seq_cur[1];
+    so.proj = (uint8_t)ui.proj_cur; so.pad2[0] = so.pad2[1] = 0; so.projsig = ui.proj_sig;
+    so.patch[0] = ju_patch[0]; so.patch[1] = ju_patch[1];
     (void)st_save(OBJ_SETTINGS, &so, sizeof so);
 #endif
 }
@@ -61,7 +66,7 @@ static void ju_store_boot(void)
         int n = st_load(OBJ_PROJECT0 + i, &ju_bankbuf, sizeof ju_bankbuf);
         if (n == (int)sizeof ju_bankbuf && ju_bankbuf.magic == JU_BANK_MAGIC) {
             uint32_t k;
-            for (k = 0; k < JU_PPO && i * JU_PPO + k < 64u; k++) ju_bank[i * JU_PPO + k] = ju_bankbuf.p[k];
+            for (k = 0; k < JU_PPO && i * JU_PPO + k < 64u; k++) { ju_bank[i * JU_PPO + k] = ju_bankbuf.p[k]; ju_patch_sanitize(&ju_bank[i * JU_PPO + k]); }
         }
     }
     {
@@ -75,6 +80,11 @@ static void ju_store_boot(void)
             if (so.octave <= 6) ju_octave = (int8_t)so.octave - 3;
             if (so.seqcur[0] < JU_SEQ_PATS) ju_seq_cur[0] = so.seqcur[0];
             if (so.seqcur[1] < JU_SEQ_PATS) ju_seq_cur[1] = so.seqcur[1];
+            ui.proj_cur = so.proj < JU_NPROJ ? (int8_t)so.proj : -1;
+            ui.proj_sig = so.projsig;
+            ju_patch[0] = so.patch[0]; ju_patch[1] = so.patch[1];
+            ju_patch_sanitize(&ju_patch[0]); ju_patch_sanitize(&ju_patch[1]);
+            ju_work_valid = 1;
         }
     }
 #endif
@@ -143,6 +153,62 @@ static void ju_store_song_boot(void)
         if (r->pat[0] >= JU_SEQ_PATS) r->pat[0] = JU_SONG_NONE;
         if (r->pat[1] >= JU_SEQ_PATS) r->pat[1] = JU_SONG_NONE;
         if (r->rep < 1 || r->rep > 16) r->rep = 1;
+    }
+#endif
+}
+
+/* ---- projects: 8 slots, each two A/B objects (OBJ_JUPROJ0 + 2 * slot, +1): the first holds sounds, song, settings and the upper
+ * part's patterns, the second the lower part's patterns. Saved and loaded only when the panel asks. */
+static ju_proj1_t ju_pbuf1 __attribute__((section(".pool")));
+static ju_proj2_t ju_pbuf2 __attribute__((section(".pool")));
+static int ju_proj_flash_save(int slot)
+{
+#if FELUCCA_FLASH
+    int r;
+    if (!flash_ok || slot < 0 || slot >= JU_NPROJ) return -1;
+    ju_proj_pack(&ju_pbuf1, &ju_pbuf2);
+    r = st_save(OBJ_JUPROJ0 + 2u * (uint32_t)slot + 1u, &ju_pbuf2, sizeof ju_pbuf2);
+    if (r == 0) r = st_save(OBJ_JUPROJ0 + 2u * (uint32_t)slot, &ju_pbuf1, sizeof ju_pbuf1);      /* the first one makes the slot valid */
+    if (r == 0) ju_proj_summarize(&ju_pbuf1, &ju_projinfo[slot]);
+    return r;
+#else
+    (void)slot;
+    return -1;
+#endif
+}
+static int ju_proj_flash_load(int slot)               /* 0 ok, -1 empty or damaged (nothing changed) */
+{
+#if FELUCCA_FLASH
+    if (!flash_ok || slot < 0 || slot >= JU_NPROJ) return -1;
+    if (st_load(OBJ_JUPROJ0 + 2u * (uint32_t)slot, &ju_pbuf1, sizeof ju_pbuf1) != (int)sizeof ju_pbuf1) return -1;
+    if (st_load(OBJ_JUPROJ0 + 2u * (uint32_t)slot + 1u, &ju_pbuf2, sizeof ju_pbuf2) != (int)sizeof ju_pbuf2) return -1;
+    return ju_proj_unpack(&ju_pbuf1, &ju_pbuf2);
+#else
+    (void)slot;
+    return -1;
+#endif
+}
+static int ju_proj_flash_clear(int slot)              /* a slot made empty: its first object gets an invalid magic */
+{
+#if FELUCCA_FLASH
+    if (!flash_ok || slot < 0 || slot >= JU_NPROJ) return -1;
+    ju_pbuf1.magic = 0;
+    ju_projinfo[slot].valid = 0;
+    return st_save(OBJ_JUPROJ0 + 2u * (uint32_t)slot, &ju_pbuf1, sizeof ju_pbuf1);
+#else
+    (void)slot;
+    return -1;
+#endif
+}
+static void ju_proj_boot(void)                        /* fills the list the project page shows */
+{
+#if FELUCCA_FLASH
+    int s;
+    if (!flash_ok) return;
+    for (s = 0; s < JU_NPROJ; s++) {
+        ju_projinfo[s].valid = 0;
+        if (st_load(OBJ_JUPROJ0 + 2u * (uint32_t)s, &ju_pbuf1, sizeof ju_pbuf1) == (int)sizeof ju_pbuf1 && ju_pbuf1.magic == JU_PROJ_MAGIC1)
+            ju_proj_summarize(&ju_pbuf1, &ju_projinfo[s]);
     }
 #endif
 }

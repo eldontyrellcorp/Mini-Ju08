@@ -21,11 +21,15 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 #define section(x)
 #include "ju_canvas.c"
 static int8_t ju_octave;
+#include "ju_proj.c"
 #include "ju_ui.c"
 static void ju_store_current(void) {}
 static int ju_store_patch(int idx) { (void)idx; return 0; }
 static int ju_store_seq(int part) { (void)part; return 0; }
 static int ju_store_song(void) { return 0; }
+static int ju_proj_flash_save(int s) { (void)s; return 0; }
+static int ju_proj_flash_load(int s) { (void)s; return -1; }
+static int ju_proj_flash_clear(int s) { (void)s; return 0; }
 
 static void save(const char *name)
 {
@@ -72,6 +76,9 @@ int main(int argc, char **argv)
     ui.overview = 0;
     for (g = 0; g < NPANELPAGES; g++) { ui.page = PAGE_PANEL; ui.focus[PAGE_PANEL] = sp_first(PAGE_PANEL, g); snprintf(path, sizeof path, "%s/panel%d.ppm", dir, g); frame(path, 5000); }
     for (g = 0; g < NPERFPAGES; g++) { ui.page = PAGE_PERF; ui.focus[PAGE_PERF] = sp_first(PAGE_PERF, g); snprintf(path, sizeof path, "%s/perf%d.ppm", dir, g); frame(path, 5000); }
+    { int i; for (i = 0; i < 5; i += 2) { ju_projinfo[i].valid = 1; strcpy(ju_projinfo[i].n0, "JUPITER PAD"); strcpy(ju_projinfo[i].n1, "DEEP SUB"); ju_projinfo[i].tempo = 80 + i; } }
+    ui.page = PAGE_PROJ; ui.proj_sel = 2; ui.proj_cur = 2; ui.work_sig = 1; ui.proj_sig = 1; snprintf(path, sizeof path, "%s/proj.ppm", dir); frame(path, 5000);
+    ui.proj_msg = "OCT+ AGAIN: OVERWRITE THIS SLOT"; ui.proj_msg_at = 4000; ui.work_sig = 2; snprintf(path, sizeof path, "%s/proj2.ppm", dir); frame(path, 5000); ui.proj_msg = 0;
     ui.page = PAGE_PANEL; ui_focus_on(PAGE_PANEL, P_VCF_CUT); snprintf(path, sizeof path, "%s/panel.ppm", dir); frame(path, 5000);
     ui.page = PAGE_PERF; ui_focus_on(PAGE_PERF, PG(G_ARP_MODE)); snprintf(path, sizeof path, "%s/perf.ppm", dir); frame(path, 5000);
     ju_patch[0].fx.mfxOn = 1; ju_patch[0].fx.revOn = 1;
