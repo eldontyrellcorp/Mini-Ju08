@@ -18,6 +18,8 @@ static void ju_store_current(void) { stored_cur++; }
 static int ju_store_patch(int idx) { stored_patch = idx; return 0; }
 static int stored_seq[2];
 static int ju_store_seq(int part) { stored_seq[part]++; return 0; }
+static int stored_song;
+static int ju_store_song(void) { stored_song++; return 0; }
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -142,7 +144,38 @@ int main(void)
         ju_pat[0][0].type[5] = SQ_NOTE;
         in = press(B_OCTDN); step(&in); CHECK(ju_pat[0][0].type[5] == SQ_NOTE);                      /* once: asks */
         in = press(B_OCTDN); step(&in); CHECK(ju_pat[0][0].type[5] == SQ_REST);                      /* twice: cleared */
+        /* SEQ again: the song page; the knobs edit rows (KNOB 1 the row, 2 upper, 3 lower, 4 repeats) */
+        in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 2);
+        ju_song.n = 0; ui.song_cur = 0; ju_global[G_SONG] = 0; ju_seq_cur[0] = 3; ju_seq_cur[1] = 5; ju_song_dirty = 0;
+        in = turn(1, 1); step(&in);                                                                     /* a turn on the empty row makes it a row */
+        CHECK(ju_song.n == 1 && ju_song.row[0].pat[0] == 4 && ju_song.row[0].pat[1] == 5 && ju_song.row[0].rep == 1 && ju_song_dirty);
+        in = turn(1, -9); step(&in); CHECK(ju_song.row[0].pat[0] == JU_SONG_NONE);                       /* --: none, below the first pattern */
+        in = turn(1, 3); step(&in); CHECK(ju_song.row[0].pat[0] == 2);                                   /* -1 + 3 */
+        in = turn(2, 20); step(&in); CHECK(ju_song.row[0].pat[1] == 15);
+        in = turn(3, 3); step(&in); CHECK(ju_song.row[0].rep == 4);
+        in = turn(3, 99); step(&in); CHECK(ju_song.row[0].rep == 16);
+        in = turn(3, -99); step(&in); CHECK(ju_song.row[0].rep == 1);
+        in = turn(0, 1); step(&in); CHECK(ui.song_cur == 1 && ju_song.n == 1);                          /* the empty row after the last */
+        in = turn(0, 5); step(&in); CHECK(ui.song_cur == 1);                                             /* no further than that */
+        in = turn(3, 2); step(&in); CHECK(ju_song.n == 2 && ju_song.row[1].rep == 3);
+        in = turn(0, -1); step(&in); CHECK(ui.song_cur == 0 && ju_song_sel == 0);
+        in = press(B_OCTUP); step(&in); CHECK(ju_song.n == 3 && ju_song.row[0].pat[1] == ju_song.row[1].pat[1] && ju_song.row[2].rep == 3);   /* a copy before the row */
+        ju_song.row[1].rep = 9;
+        ui.song_cur = 1; in = press(B_SCL); step(&in); CHECK(ju_song.n == 2 && ju_song.row[1].rep == 3);  /* delete the row */
+        in = turn(0, 1); step(&in); CHECK(ju_song_sel == 1);                                            /* PLAY starts from the cursor's row */
+        in = press(B_OCTDN); step(&in); CHECK(ju_global[G_SONG] == 1);                                   /* song mode on */
+        in = press(B_OCTDN); step(&in); CHECK(ju_global[G_SONG] == 0);
+        for (int i = 0; i < JU_SONG_ROWS + 4; i++) { ui.song_cur = (uint8_t)ju_song.n; in = turn(3, 1); step(&in); }
+        CHECK(ju_song.n == JU_SONG_ROWS);                                                                 /* a song has 32 rows at most */
+        in = press(B_OCTUP); step(&in); CHECK(ju_song.n == JU_SONG_ROWS);
+        ju_song.n = 0;
+        {   /* saved two seconds on, when stopped and silent */
+            ju_song_dirty = 1; ju_seq_run = 0; stored_song = 0; ju_seq_dirty[0] = ju_seq_dirty[1] = 0; ui.seq_save_at = 0;
+            memset(&in, 0, sizeof in); T += 100; ui_update(&in, T); T += 2500; ui_update(&in, T);
+            CHECK(stored_song == 1 && !ju_song_dirty);
+        }
         in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 0);
+        ju_seq_cur[0] = ju_seq_cur[1] = 0;
         /* the other part has its own pattern */
         ju_global[G_PANEL] = 1; ju_seq_cursor[1] = 0; ju_pat[1][0].len = 16;
         in = turn(1, 2); step(&in); CHECK(ju_pat[1][0].type[0] == SQ_NOTE && ju_pat[0][0].type[0] == SQ_REST);

@@ -24,3 +24,5 @@ extern volatile uint32_t ju_click_count; extern uint8_t ju_click_accent; extern 
 void ju_click_render(int32_t *, uint32_t); int ju_seq_count_beats_left(void); int ju_seq_undo_count(void);
 void ju_click_trig(int);
 int ju_seq_tick_phase(void);
+extern ju_song_t ju_song; extern volatile uint8_t ju_song_dirty, ju_song_row; extern uint8_t ju_song_sel;
+int ju_seq_playing_pat(int); int ju_song_playing(void);

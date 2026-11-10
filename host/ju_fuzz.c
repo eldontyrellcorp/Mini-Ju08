@@ -9,7 +9,7 @@ void ju_init(void); void ju_prepare_block(void); void ju_render(int32_t *, int32
 void ju_note_on(uint8_t, uint8_t); void ju_note_off(uint8_t, uint8_t); void ju_bend(uint8_t, int); void ju_modwheel_set(uint8_t, uint8_t);
 void ju_sustain_set(uint8_t, uint8_t); void ju_all_off(uint8_t); int ju_voice_active(int);
 extern ju_pat_t ju_pat[2][JU_SEQ_PATS]; extern uint8_t ju_seq_cur[2]; extern volatile uint8_t ju_seq_run, ju_seq_rec, ju_seq_req;
-extern volatile uint8_t ju_seq_op, ju_seq_op_part, ju_seq_op_step; void ju_click_render(int32_t *, uint32_t);
+extern volatile uint8_t ju_seq_op, ju_seq_op_part, ju_seq_op_step; extern ju_song_t ju_song; extern uint8_t ju_song_sel; void ju_click_render(int32_t *, uint32_t);
 void ju_seq_midi(uint8_t); void ju_note_on_m(int, uint8_t); void ju_note_off_m(int, uint8_t);
 const char *ju_mfx_name(int); int ju_mfx_nparams(int); const ju_fxparam_t *ju_mfx_param(int, int); const ju_fxparam_t *ju_delay_param(int); const ju_fxparam_t *ju_reverb_param(int);
 void ju_fx_load_mfx_defaults(ju_fxpatch_t *, int);
@@ -52,6 +52,10 @@ int main(int argc, char **argv)
                 t->len = (uint8_t)(1 + rnd() % JU_SEQ_STEPS); t->gate = (uint8_t)(1 + rnd() % 6);
                 for (i = 0; i < JU_SEQ_STEPS; i++) { t->note[i] = (uint8_t)(rnd() % 128); t->type[i] = (uint8_t)(rnd() % 3); }
             }
+            ju_global[G_SONG] = (uint8_t)(rnd() & 1); ju_global[G_SONGLOOP] = (uint8_t)(rnd() & 1);
+            ju_song.n = (uint8_t)(rnd() % (JU_SONG_ROWS + 1));
+            for (i = 0; i < JU_SONG_ROWS; i++) { ju_song.row[i].pat[0] = (uint8_t)(rnd() % 4 ? rnd() % JU_SEQ_PATS : JU_SONG_NONE); ju_song.row[i].pat[1] = (uint8_t)(rnd() % 4 ? rnd() % JU_SEQ_PATS : JU_SONG_NONE); ju_song.row[i].rep = (uint8_t)(rnd() % 20); }
+            ju_song_sel = (uint8_t)rnd();
             ju_global[G_SYNC] = (uint8_t)(rnd() & 1);
             ju_global[G_SEQKEYS] = (uint8_t)(rnd() & 1); ju_global[G_QUANT] = (uint8_t)(rnd() % 4);
             ju_global[G_TEMPO] = (uint8_t)rnd();

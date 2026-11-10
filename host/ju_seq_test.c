@@ -286,6 +286,65 @@ int main(void)
         ju_note_off_m(1, 70);
     }
 
+    /* 14. the song: rows chain patterns; a row lasts its repeats of the longer pattern; both parts change together */
+    {
+        int u0[2] = {60, 61}, u1[2] = {70, 71}, l0[2] = {80, 81};
+        #define SONG_SETUP() do { setup(); ju_global[G_SONG] = 1; ju_pat[0][0].len = 2; ju_seq_cur[0] = 0; ju_seq_cur[1] = 0; \
+            ju_pat_t *a_ = &ju_pat[0][0], *b_ = &ju_pat[0][1], *c_ = &ju_pat[1][0]; \
+            a_->len = 2; a_->gate = 3; b_->len = 2; b_->gate = 3; c_->len = 2; c_->gate = 3; \
+            for (int i_ = 0; i_ < 2; i_++) { a_->note[i_] = (uint8_t)u0[i_]; a_->type[i_] = SQ_NOTE; b_->note[i_] = (uint8_t)u1[i_]; b_->type[i_] = SQ_NOTE; c_->note[i_] = (uint8_t)l0[i_]; c_->type[i_] = SQ_NOTE; } } while (0)
+        SONG_SETUP();
+        ju_song.n = 2;
+        ju_song.row[0] = (ju_srow_t){{0, JU_SONG_NONE}, 2, 0};                           /* upper pattern 1 twice, lower silent */
+        ju_song.row[1] = (ju_srow_t){{1, 0}, 1, 0};                                      /* upper pattern 2 with lower pattern 1, once */
+        ju_song_sel = 0; ju_seq_req = 1;
+        for (int i = 0; i < 44100 * 7 / 8 / 32; i++) block();                           /* 0.875 s: 7 steps at 125 ms */
+        CHECK(count(60, 1, 0) == 2 && count(61, 1, 0) == 2 && count(70, 1, 0) == 1 && count(71, 1, 0) == 1);
+        CHECK(count(80, 1, 1) == 1 && count(81, 1, 1) == 1);                              /* the lower part only in row 2 */
+        CHECK(near(ms(nth(70, 1, 0, 0)) - ms(nth(60, 1, 0, 0)), 500, 2));                /* row 1 is 4 steps */
+        CHECK(near(ms(nth(80, 1, 1, 0)) - ms(nth(70, 1, 0, 0)), 0, 2));                  /* both parts change together */
+        CHECK(!ju_seq_run && !ju_song_playing());                                         /* the end of the song stops it */
+        /* looping */
+        SONG_SETUP(); ju_song.n = 2; ju_song.row[0] = (ju_srow_t){{0, JU_SONG_NONE}, 2, 0}; ju_song.row[1] = (ju_srow_t){{1, 0}, 1, 0};
+        ju_global[G_SONGLOOP] = 1; ju_song_sel = 0; ju_seq_req = 1;
+        for (int i = 0; i < 44100 * 3 / 2 / 32; i++) block();                           /* 1.5 s: 12 steps = two rounds of 6 */
+        CHECK(ju_seq_run && count(60, 1, 0) == 4 && count(70, 1, 0) == 2 && count(80, 1, 1) == 2);
+        CHECK(near(ms(nth(60, 1, 0, 2)) - ms(nth(60, 1, 0, 0)), 750, 3));                /* the song is 6 steps = 750 ms */
+        ju_seq_req = 2; block();
+        /* starting from a row */
+        SONG_SETUP(); ju_song.n = 2; ju_song.row[0] = (ju_srow_t){{0, JU_SONG_NONE}, 2, 0}; ju_song.row[1] = (ju_srow_t){{1, 0}, 1, 0};
+        ju_song_sel = 1; ju_seq_req = 1;
+        for (int i = 0; i < 44100 / 4 / 32; i++) block();
+        CHECK(count(70, 1, 0) == 1 && count(60, 1, 0) == 0 && ju_song_row == 1);
+        /* rows of unequal patterns: the row lasts the longer one; the shorter wraps */
+        SONG_SETUP(); { int lw[3] = {40, 41, 42}; ju_pat_t *w = &ju_pat[1][1]; w->len = 3; w->gate = 3; for (int i = 0; i < 3; i++) { w->note[i] = (uint8_t)lw[i]; w->type[i] = SQ_NOTE; } }
+        ju_pat[0][0].len = 4; for (int i = 0; i < 4; i++) { ju_pat[0][0].note[i] = (uint8_t)(60 + i); ju_pat[0][0].type[i] = SQ_NOTE; }
+        ju_song.n = 1; ju_song.row[0] = (ju_srow_t){{0, 1}, 1, 0};
+        ju_song_sel = 0; ju_seq_req = 1;
+        for (int i = 0; i < 44100 / 2 / 32 + 40; i++) block();                          /* 500 ms: the row's 4 steps, then it ends */
+        CHECK(count(63, 1, 0) == 1 && count(40, 1, 1) == 2 && count(41, 1, 1) == 1 && count(42, 1, 1) == 1 && !ju_seq_run);   /* the 3-step pattern wrapped once */
+        /* song mode off, or no rows: the selected patterns play, as before */
+        SONG_SETUP(); ju_global[G_SONG] = 0; ju_song.n = 1; ju_song.row[0] = (ju_srow_t){{1, 0}, 1, 0}; ju_seq_cur[0] = 0; ju_seq_req = 1;
+        for (int i = 0; i < 44100 / 4 / 32; i++) block();
+        CHECK(count(60, 1, 0) >= 1 && count(70, 1, 0) == 0 && ju_seq_run); ju_seq_req = 2; block();
+        SONG_SETUP(); ju_song.n = 0; ju_seq_req = 1;
+        for (int i = 0; i < 44100 / 4 / 32; i++) block();
+        CHECK(count(60, 1, 0) >= 1 && ju_seq_run); ju_seq_req = 2; block();
+        /* after stopping, the part is back on its own selected pattern (the editing one) */
+        CHECK(ju_seq_playing_pat(0) == 0 && ju_seq_playing_pat(1) == 0);
+        /* a part with no pattern in the row is left to the keys */
+        SONG_SETUP(); ju_song.n = 1; ju_song.row[0] = (ju_srow_t){{0, JU_SONG_NONE}, 4, 0}; ju_seq_req = 1;
+        for (int i = 0; i < 10; i++) block();
+        ju_note_on_m(2, 50); for (int i = 0; i < 5; i++) block();
+        CHECK(count(50, 1, 1) == 1); ju_note_off_m(2, 50); ju_seq_req = 2; block();
+        /* recording during a song goes into the pattern that plays */
+        SONG_SETUP(); ju_song.n = 1; ju_song.row[0] = (ju_srow_t){{1, JU_SONG_NONE}, 4, 0}; ju_seq_cur[0] = 0; ju_seq_rec = 1; ju_seq_req = 1;
+        for (int i = 0; i < 10; i++) block();
+        ju_note_on_m(1, 99); ju_note_off_m(1, 99);
+        { int found = 0; for (int i = 0; i < 2; i++) found += ju_pat[0][1].note[i] == 99; CHECK(found == 1 && ju_pat[0][0].note[0] == 60); }   /* pattern 2 got it, pattern 1 untouched */
+        ju_seq_rec = 0; ju_seq_req = 2; block();
+    }
+
     printf("sequencer: %s\n", fails ? "FAILED" : "all checks passed");
     return fails ? 1 : 0;
 }

@@ -71,7 +71,7 @@ static const spage_t kPerfPages[] = {
     {"LFO MOD", K_RED, 5, {PG(G_MOD_RISE), PG(G_MOD_VCO), PG(G_MOD_VCOSW), PG(G_MOD_VCF), PG(G_MOD_VCFSW)}},
     {"MASTER", K_ORANGE, 4, {PG(G_VOLUME), PG(G_BAL_U), PG(G_BAL_L), PG(G_TUNE)}},
     {"MIDI", K_YELLOW, 2, {PG(G_CH_U), PG(G_CH_L)}},
-    {"SEQUENCER", K_ORANGE, 3, {PG(G_SYNC), PG(G_TEMPO), PG(G_SEQKEYS)}},
+    {"SEQUENCER", K_ORANGE, 5, {PG(G_SYNC), PG(G_TEMPO), PG(G_SEQKEYS), PG(G_SONG), PG(G_SONGLOOP)}},
     {"RECORDING", K_YELLOW, 4, {PG(G_METRO), PG(G_COUNTIN), PG(G_CLICKVOL), PG(G_QUANT)}},
 };
 #define NPANELPAGES ((int)(sizeof kPanelPages / sizeof kPanelPages[0]))
@@ -204,6 +204,7 @@ typedef struct {
     uint8_t rec_used, panic_done;       /* REC was used as a modifier; PLAY held long enough for all notes off */
     uint32_t play_down_at, seq_save_at, clear_at;
     uint8_t seq_lo;                     /* the lowest note the piano roll shows (it follows the cursor) */
+    uint8_t song_cur;                   /* the song page's row (n: the empty row after the last) */
 } ui_t;
 static ui_t ui = {PAGE_QLINK, 0, {0, 0, 0, 0, 0}, {8, 0}, 0, 0, {0}, -1, 0, 0, 0, 0, {0}, 1, 0, 0};
 
@@ -219,6 +220,7 @@ static void ui_focus_on(int page, int id)
 static int cv_text_w_1(const char *x) { return cv_text_w(x, 1); }
 static void ju_store_current(void);                       /* ju_store.c */
 static int ju_store_seq(int part);
+static int ju_store_song(void);
 static int ju_store_patch(int idx);
 
 static int ui_layer(void) { return ju_global[G_PANEL] & 1; }
@@ -572,12 +574,70 @@ static void ui_seq_view(void)                               /* the roll follows 
     if (n > lo + ROLL_ROWS - 3) lo = n - (ROLL_ROWS - 3);
     ui.seq_lo = (uint8_t)(lo < 0 ? 0 : lo > 127 - ROLL_ROWS + 1 ? 127 - ROLL_ROWS + 1 : lo);
 }
+/* ---- the song page: rows of (upper pattern, lower pattern, repeats). KNOB 1 the row, 2 the upper pattern, 3 the lower pattern (--: none),
+ * 4 the repeats. SCL deletes the row, OCT+ inserts a copy, OCT- song mode on / off. */
+static void ui_song_insert(void)
+{
+    int i, c = ui.song_cur;
+    if (ju_song.n >= JU_SONG_ROWS) return;
+    if (c > ju_song.n) c = ju_song.n;
+    for (i = ju_song.n; i > c; i--) ju_song.row[i] = ju_song.row[i - 1];
+    if (c < ju_song.n) ju_song.row[c] = ju_song.row[c + 1];                  /* a copy of the row it goes before */
+    else { ju_song.row[c].pat[0] = (uint8_t)ju_seq_cur[0]; ju_song.row[c].pat[1] = (uint8_t)ju_seq_cur[1]; ju_song.row[c].rep = 1; }
+    ju_song.n++;
+    ju_song_dirty = 1;
+}
+static void ui_song_input(const ju_in_t *in, uint32_t now)
+{
+    int d, f, i;
+    (void)now;
+    if (in->knob[0]) {
+        d = ui.song_cur + in->knob[0];
+        d = d < 0 ? 0 : d > ju_song.n ? ju_song.n : d;
+        if (d > JU_SONG_ROWS - 1) d = JU_SONG_ROWS - 1;
+        ui.song_cur = (uint8_t)d;
+        ju_song_sel = (uint8_t)(ui.song_cur < ju_song.n ? ui.song_cur : (ju_song.n ? ju_song.n - 1 : 0));        /* PLAY starts from here */
+    }
+    for (f = 1; f <= 3; f++) {
+        if (!in->knob[f]) continue;
+        if (ui.song_cur >= ju_song.n) {                                      /* the empty row: a turn makes it a row */
+            ju_srow_t *r;
+            if (ju_song.n >= JU_SONG_ROWS) continue;
+            r = &ju_song.row[ju_song.n];
+            r->pat[0] = (uint8_t)ju_seq_cur[0]; r->pat[1] = (uint8_t)ju_seq_cur[1]; r->rep = 1;
+            ui.song_cur = ju_song.n;
+            ju_song.n++;
+        }
+        {
+            ju_srow_t *r = &ju_song.row[ui.song_cur];
+            if (f == 3) {
+                d = (int)r->rep + in->knob[3];
+                r->rep = (uint8_t)(d < 1 ? 1 : d > 16 ? 16 : d);
+            } else {
+                i = f - 1;
+                d = (r->pat[i] >= JU_SEQ_PATS ? -1 : (int)r->pat[i]) + in->knob[f];
+                d = d < -1 ? -1 : d > JU_SEQ_PATS - 1 ? JU_SEQ_PATS - 1 : d;
+                r->pat[i] = d < 0 ? JU_SONG_NONE : (uint8_t)d;
+            }
+            ju_song_dirty = 1;
+        }
+    }
+    if ((in->press & BTN(B_SCL)) && ui.song_cur < ju_song.n) {               /* delete the row */
+        for (i = ui.song_cur; i + 1 < ju_song.n; i++) ju_song.row[i] = ju_song.row[i + 1];
+        ju_song.n--;
+        ju_song_dirty = 1;
+        if (ui.song_cur > ju_song.n) ui.song_cur = ju_song.n;
+        ju_song_sel = (uint8_t)(ui.song_cur < ju_song.n ? ui.song_cur : (ju_song.n ? ju_song.n - 1 : 0));
+    }
+}
+
 static void ui_seq_input(const ju_in_t *in, uint32_t now)
 {
     int p = ui_layer(), n;
     ju_pat_t *t = ui_pat();
     uint8_t *cur = &ju_seq_cursor[p];
     ui.turning_enc = 1;
+    if (ui.seq_sub == 2) { ui_song_input(in, now); return; }
     if (!t->len) t->len = 16;
     if (*cur >= t->len) *cur = (uint8_t)(t->len - 1);
     if (!ui.seq_sub) {
@@ -633,7 +693,7 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     if (in->press & BTN(B_SAVE)) { ui.page = PAGE_PATCH; ui.write_mode = 0; }
     if (in->press & BTN(B_ENV)) ui_group_to(ui.page == PAGE_QLINK && ui.qgroup == 2 ? 3 : 2);
     if (in->press & BTN(B_LFO)) ui_group_to(5);
-    if (in->press & BTN(B_SEQ)) { if (ui.page == PAGE_SEQ) ui.seq_sub ^= 1; else { ui.page = PAGE_SEQ; ui.seq_sub = 0; } ui.write_mode = 0; }
+    if (in->press & BTN(B_SEQ)) { if (ui.page == PAGE_SEQ) ui.seq_sub = (uint8_t)((ui.seq_sub + 1) % 3); else { ui.page = PAGE_SEQ; ui.seq_sub = 0; } ui.write_mode = 0; }
     if ((in->press & BTN(B_SCL)) && ui.page != PAGE_SEQ) ui_group_to(7);          /* (on the SEQ page SCL clears a step) */
     if (in->press & BTN(B_ARP)) { ju_global[G_ARP_ON] ^= 1; ui.save_at = now + 2000u; }
     /* PLAY: a tap starts / stops the sequencer, held for 0.6 s it is all notes off */
@@ -648,7 +708,10 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     /* REC: tapped, it arms recording; used with a knob (the dial restore) it does not */
     if (in->press & BTN(B_REC)) ui.rec_used = 0;
     if ((in->released & BTN(B_REC)) && !ui.rec_used) ju_seq_rec ^= 1;
-    if (ui.page == PAGE_SEQ && ui.seq_sub) {
+    if (ui.page == PAGE_SEQ && ui.seq_sub == 2) {
+        if (in->press & BTN(B_OCTUP)) ui_song_insert();                       /* a copy of the row, before it */
+        if (in->press & BTN(B_OCTDN)) { ju_global[G_SONG] ^= 1; ui.save_at = now + 2000u; }          /* song mode on / off */
+    } else if (ui.page == PAGE_SEQ && ui.seq_sub) {
         if (in->press & BTN(B_OCTDN)) {                  /* OCT- twice within two seconds: the pattern is cleared */
             if (ui.clear_at && now - ui.clear_at < 2000u) { ui_seq_clear(); ui.clear_at = 0; } else ui.clear_at = now ? now : 1u;
         }
@@ -690,13 +753,14 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     if (ui.page == PAGE_SEQ) ui_seq_view();
     if (ui.overview && now - ui.overview_at >= OVERVIEW_MS) ui.overview = 0;
 
-    if ((ju_seq_dirty[0] || ju_seq_dirty[1]) && !ui.seq_save_at) ui.seq_save_at = now + 2000u;
+    if ((ju_seq_dirty[0] || ju_seq_dirty[1] || ju_song_dirty) && !ui.seq_save_at) ui.seq_save_at = now + 2000u;
     if (ui.seq_save_at && (int32_t)(now - ui.seq_save_at) > 0 && !ju_seq_run) {
         int silent = 1, part;
         for (i = 0; i < JU_NV; i++) silent = silent && ju_voice_level(i) == 0;
         if (silent) {                                    /* a flash write stalls the audio: only when nothing sounds and it is not playing */
             ui.seq_save_at = 0;
             for (part = 0; part < 2; part++) if (ju_seq_dirty[part]) { ju_seq_dirty[part] = 0; (void)ju_store_seq(part); }
+            if (ju_song_dirty) { ju_song_dirty = 0; (void)ju_store_song(); }
             ju_store_current();
         }
     }
@@ -737,6 +801,7 @@ static void d_header(void)
     cv_text(174, 12, buf, ui.cpu > 85 ? K_RED : K_DIM, 1);
     if (ju_seq_count_beats_left()) { char cb[8]; cb[0] = 0; ui_strcat(cb, sizeof cb, "IN "); ui_num(cb, sizeof cb, ju_seq_count_beats_left()); cv_text(214, 12, cb, K_RED, 1); }
     else if (ju_seq_rec) cv_text(214, 12, "REC", K_RED, 1);
+    else if (ju_song_playing()) { char sb[8]; sb[0] = 0; ui_strcat(sb, sizeof sb, "SNG"); ui_num(sb, sizeof sb, ju_song_row + 1); cv_text(214, 12, sb, K_FOCUS, 1); }
     else if (ju_seq_run) cv_text(214, 12, "PLAY", K_FOCUS, 1);
     else if (ju_global[G_ARP_ON]) cv_text(214, 12, "ARP", K_YELLOW, 1);
     cv_rect(0, 22, CV_W, 1, K_LINE);
@@ -993,6 +1058,12 @@ static void d_readout(void)
         return;
     }
     if (ui.page == PAGE_SEQ) {
+        if (ui.seq_sub == 2) {
+            cv_text(6, y + 6, "1 ROW  2 UPPER  3 LOWER  4 REPEAT", K_DIM, 1);
+            cv_text(6, y + 18, "SCL DELETE  OCT+ INSERT  OCT- ON/OFF", K_DIM, 1);
+            cv_text(6, y + 30, ju_global[G_SONG] ? "SEQ AGAIN: THE ROLL" : "SONG IS OFF: OCT- TURNS IT ON", ju_global[G_SONG] ? K_DIM : K_RED, 1);
+            return;
+        }
         if (ui.seq_sub) {
             cv_text(6, y + 6, ui.clear_at ? "PRESS OCT- AGAIN TO CLEAR THE PATTERN" : "THE FOUR KNOBS SET THE FOUR VALUES", ui.clear_at ? K_RED : K_DIM, 1);
             cv_text(6, y + 18, "OCT- TWICE CLEARS THE PATTERN", K_DIM, 1);
@@ -1078,12 +1149,12 @@ static void d_seq_roll(int p, const ju_pat_t *t, int len, int cur, uint16_t col)
         h = RL_RH - 1;
         if (t->note[i] < lo) y = RL_Y1 - 2; else if (t->note[i] >= lo + ROLL_ROWS) y = RL_Y0; else y = roll_y(t->note[i], lo) + 1;
         if (t->note[i] < lo || t->note[i] >= lo + ROLL_ROWS) h = 2;                           /* off the roll: a mark at its edge */
-        playing = ju_seq_run && ju_seq_pos[p] >= i && ju_seq_pos[p] < e;
+        playing = ju_seq_run && ju_seq_playing_pat(p) == ju_seq_cur[p] && ju_seq_pos[p] >= i && ju_seq_pos[p] < e;
         c = i == hc ? K_FOCUS : (playing ? K_TEXT : col);
         cv_rect(x0, y, x1 - x0, h, c);
         if (i >= base && x1 - x0 > 4) cv_rect(x0, y, 2, h, K_BG);                              /* a notch where it starts */
     }
-    if (ju_seq_run && ju_seq_pos[p] >= base && ju_seq_pos[p] < base + 16)                       /* the step playing */
+    if (ju_seq_run && ju_seq_playing_pat(p) == ju_seq_cur[p] && ju_seq_pos[p] >= base && ju_seq_pos[p] < base + 16)      /* the step playing */
         cv_rect(roll_x(ju_seq_pos[p] - base), RL_Y0, 2, ROLL_ROWS * RL_RH, K_LEDON);
     for (r = 0; r < ROLL_ROWS; r++) {                       /* the C labels, last: no row paints over them */
         int n = lo + ROLL_ROWS - 1 - r, y = RL_Y0 + r * RL_RH;
@@ -1095,6 +1166,40 @@ static void d_seq_roll(int p, const ju_pat_t *t, int len, int cur, uint16_t col)
     cv_rect(roll_x(cur - base) + sw / 2 - 1, RL_Y1 + 5, 3, 2, K_FOCUS);
 }
 
+/* ---- the song page: a list of rows, five at a time at double size */
+static void d_song(void)
+{
+    int n = ju_song.n, cur = ui.song_cur, top, k, last = n < JU_SONG_ROWS ? n : JU_SONG_ROWS - 1;
+    char b[12];
+    cv_rect(0, 24, CV_W, 20, K_YELLOW);
+    cv_text(6, 27, "SONG", K_BG, 2);
+    cv_text(CV_W - 6 - cv_text_w(ju_global[G_SONG] ? "ON" : "OFF", 2), 27, ju_global[G_SONG] ? "ON" : "OFF", K_BG, 2);
+    if (ju_global[G_SONGLOOP]) cv_text(CV_W - 60 - cv_text_w("LOOP", 1), 31, "LOOP", K_BG, 1);
+    cv_text(8, 47, "ROW", K_DIM, 1); cv_text(56, 47, "UPPER", K_ORANGE, 1); cv_text(110, 47, "LOWER", K_BLUE, 1); cv_text(164, 47, "REPEAT", K_DIM, 1);
+    if (!cv_sees(56, 140)) return;
+    top = cur < 2 ? 0 : cur - 2;
+    if (top > last + 1 - 5) top = last + 1 - 5;
+    if (top < 0) top = 0;
+    for (k = 0; k < 5; k++) {
+        int idx = top + k, y = 56 + k * 28, foc = idx == cur, playing = ju_song_playing() && idx == ju_song_row && idx < n;
+        if (idx > last) break;
+        cv_rect(0, y, CV_W, 27, foc ? K_FOCBG : K_PANEL);
+        if (playing) cv_rect(0, y, 4, 27, K_LEDON);
+        if (idx >= n) { cv_text(8, y + 7, "+ NEW ROW", foc ? K_FOCUS : K_DIM, 2); continue; }
+        b[0] = 0; if (idx + 1 < 10) ui_strcat(b, sizeof b, "0"); ui_num(b, sizeof b, idx + 1);
+        cv_text(8, y + 7, b, playing ? K_TEXT : (foc ? K_FOCUS : K_DIM), 2);
+        for (int i = 0; i < 2; i++) {
+            const ju_srow_t *r = &ju_song.row[idx];
+            b[0] = 0;
+            if (r->pat[i] >= JU_SEQ_PATS) ui_strcat(b, sizeof b, "--");
+            else { if (r->pat[i] + 1 < 10) ui_strcat(b, sizeof b, "0"); ui_num(b, sizeof b, r->pat[i] + 1); }
+            cv_text(56 + i * 54, y + 7, b, r->pat[i] >= JU_SEQ_PATS ? K_LINE : (i ? K_BLUE : K_ORANGE), 2);
+        }
+        b[0] = 0; ui_strcat(b, sizeof b, "x"); ui_num(b, sizeof b, ju_song.row[idx].rep);
+        cv_text(164, y + 7, b, foc ? K_FOCUS : K_TEXT, 2);
+    }
+}
+
 static void d_seq(void)
 {
     int p = ui_layer();
@@ -1102,6 +1207,7 @@ static void d_seq(void)
     int len = t->len ? t->len : 16, cur = ju_seq_cursor[p] % len, h = seq_head(t, cur);
     char b[24], v[12];
     uint16_t col = p ? K_BLUE : K_ORANGE;
+    if (ui.seq_sub == 2) { d_song(); return; }
     cv_rect(0, 24, CV_W, 34, K_BG);
     if (ui.seq_sub) {                                       /* the setup: four big values, as Sloop shows its settings */
         static const char *const nm[4] = {"LENGTH", "GATE", "TEMPO", "PATTERN"};

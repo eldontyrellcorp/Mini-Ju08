@@ -518,7 +518,18 @@ static int16_t ju_seq_rec_key[2] = {-1, -1};         /* the key being recorded (
 static int16_t ju_seq_rec_step[2] = {-1, -1};
 
 static void ju_seq_forget(void) { ju_seq_snd[0] = ju_seq_snd[1] = -1; }      /* every voice was released: nothing to release later */
-static ju_pat_t *ju_seq_pat(int p) { return &ju_pat[p][ju_seq_cur[p] % JU_SEQ_PATS]; }
+ju_song_t ju_song;
+volatile uint8_t ju_song_dirty;
+volatile uint8_t ju_song_row;                            /* the row playing (while a song plays) */
+uint8_t ju_song_sel;                                     /* the row PLAY starts from (the panel's cursor) */
+static uint8_t ju_song_act;                              /* a song is playing (it was started in song mode) */
+static int8_t ju_seq_pidx[2] = {-1, -1};                 /* the pattern each part plays in the song's row, -1 none */
+static uint32_t ju_song_steps, ju_song_row_steps;        /* steps played in the row, and the row's length */
+static ju_pat_t ju_seq_empty;                            /* what a part with no pattern in the row plays: nothing */
+static int ju_seq_idx(int p) { return ju_song_act ? ju_seq_pidx[p] : (int)(ju_seq_cur[p] % JU_SEQ_PATS); }
+static ju_pat_t *ju_seq_pat(int p) { int i = ju_seq_idx(p); return i < 0 ? &ju_seq_empty : &ju_pat[p][i]; }
+int ju_seq_playing_pat(int p) { return ju_seq_idx(p); }  /* the pattern a part plays now (-1 none) */
+int ju_song_playing(void) { return ju_song_act && ju_seq_run; }
 int ju_seq_active(int p)                             /* the part has a pattern with a note in it */
 {
     const ju_pat_t *t = ju_seq_pat(p);
@@ -536,6 +547,10 @@ void ju_seq_defaults(void)
             t->len = 16; t->gate = 3; t->pad[0] = t->pad[1] = 0;
         }
     for (p = 0; p < 2; p++) { ju_seq_cur[p] = 0; ju_seq_cursor[p] = 0; ju_seq_dirty[p] = 0; }
+    for (i = 0; i < JU_SEQ_STEPS; i++) { ju_seq_empty.note[i] = 60; ju_seq_empty.type[i] = SQ_REST; }
+    ju_seq_empty.len = 16; ju_seq_empty.gate = 3;
+    ju_song.n = 0; ju_song_dirty = 0; ju_song_sel = 0; ju_song_act = 0; ju_song_row = 0;
+    for (i = 0; i < JU_SONG_ROWS; i++) { ju_song.row[i].pat[0] = ju_song.row[i].pat[1] = JU_SONG_NONE; ju_song.row[i].rep = 1; }
 }
 static void ju_seq_release(int p)
 {
@@ -579,9 +594,10 @@ static ju_undo_t ju_undo[JU_UNDO_N];
 static uint8_t ju_undo_head, ju_undo_cnt;
 static void ju_undo_push(int part, int step, int grp)    /* before the step changes */
 {
-    const ju_pat_t *t = &ju_pat[part][ju_seq_cur[part] % JU_SEQ_PATS];
+    const ju_pat_t *t = ju_seq_pat(part);
     ju_undo_t *u = &ju_undo[ju_undo_head];
-    u->part = (uint8_t)part; u->pat = (uint8_t)(ju_seq_cur[part] % JU_SEQ_PATS); u->step = (uint8_t)step;
+    if (ju_seq_idx(part) < 0) return;
+    u->part = (uint8_t)part; u->pat = (uint8_t)ju_seq_idx(part); u->step = (uint8_t)step;
     u->note = t->note[step]; u->type = t->type[step]; u->grp = (uint8_t)grp;
     ju_undo_head = (uint8_t)((ju_undo_head + 1) % JU_UNDO_N);
     if (ju_undo_cnt < JU_UNDO_N) ju_undo_cnt++;
@@ -605,9 +621,9 @@ static void ju_seq_undo(void)                            /* the last change, wit
 }
 static void ju_seq_erase(int part, int step)             /* the step and the ties that hang on it become rests */
 {
-    ju_pat_t *t = &ju_pat[part][ju_seq_cur[part] % JU_SEQ_PATS];
+    ju_pat_t *t = ju_seq_pat(part);
     int k = step, first = 1;
-    if (step < 0 || step >= t->len) return;
+    if (ju_seq_idx(part) < 0 || step < 0 || step >= t->len) return;
     do {
         if (t->type[k] != SQ_REST) { ju_undo_push(part, k, !first); first = 0; t->type[k] = SQ_REST; }
         k++;
@@ -622,9 +638,28 @@ static uint32_t ju_seq_pp;                               /* pulses since the sta
 int ju_seq_tick_phase(void) { return ju_seq_tick6; }                  /* ticks of the step run so far (0: the step's last tick has just run) */
 int ju_seq_count_beats_left(void) { return (int)((ju_seq_cnt + 23u) / 24u); }
 
+static void ju_song_begin_row(int row)                    /* the row's patterns, its length in steps, and both parts back at their step 0 */
+{
+    const ju_srow_t *r = &ju_song.row[row];
+    int p, maxlen = 0;
+    ju_song_row = (uint8_t)row;
+    for (p = 0; p < 2; p++) {
+        ju_seq_pidx[p] = r->pat[p] < JU_SEQ_PATS ? (int8_t)r->pat[p] : -1;
+        if (ju_seq_pidx[p] >= 0 && ju_seq_pat(p)->len > maxlen) maxlen = ju_seq_pat(p)->len;
+    }
+    ju_song_row_steps = (uint32_t)(r->rep < 1 ? 1 : r->rep > 16 ? 16 : r->rep) * (uint32_t)(maxlen ? maxlen : 16);
+    ju_song_steps = 0;
+    for (p = 0; p < 2; p++) {
+        const ju_pat_t *t = ju_seq_pat(p);
+        ju_seq_release(p);
+        ju_seq_pos[p] = (uint8_t)(t->len ? t->len - 1 : 0);
+    }
+}
 static void ju_seq_start_state(void)
 {
     int p;
+    ju_song_act = (uint8_t)(ju_global[G_SONG] && ju_song.n > 0);
+    if (ju_song_act) ju_song_begin_row(ju_song_sel < ju_song.n ? ju_song_sel : 0);
     for (p = 0; p < 2; p++) {
         const ju_pat_t *t = ju_seq_pat(p);
         ju_seq_release(p);
@@ -653,6 +688,7 @@ static void ju_seq_stop(void)
     int p;
     ju_seq_run = 0;
     ju_seq_cnt = 0;
+    ju_song_act = 0;
     for (p = 0; p < 2; p++) { ju_seq_release(p); ju_seq_rec_key[p] = ju_seq_rec_step[p] = -1; }
 }
 static void ju_seq_step(int p)
@@ -687,12 +723,26 @@ static void ju_seq_tick(void)
     int p;
     for (p = 0; p < 2; p++)
         if (ju_seq_snd[p] >= 0 && ju_seq_gate_left[p] != 255 && ju_seq_gate_left[p] && --ju_seq_gate_left[p] == 0) ju_seq_release(p);
-    if (ju_seq_tick6 == 0) for (p = 0; p < 2; p++) ju_seq_step(p);
+    if (ju_seq_tick6 == 0) {
+        if (ju_song_act) {                                                  /* the song: a row ends after its repeats of the longer pattern */
+            if (ju_song_steps >= ju_song_row_steps) {
+                int next = ju_song_row + 1;
+                if (next >= ju_song.n) {
+                    if (ju_global[G_SONGLOOP] && ju_song.n > 0) next = 0;
+                    else { ju_seq_stop(); return; }                          /* the end of the song */
+                }
+                ju_song_begin_row(next);
+            }
+            ju_song_steps++;
+        }
+        for (p = 0; p < 2; p++) ju_seq_step(p);
+    }
     if (++ju_seq_tick6 >= 6) ju_seq_tick6 = 0;
 }
 /* one clock pulse (24 to a quarter note): the count-in, or a tick of the sequencer, with the metronome's click on the beat */
 static void ju_seq_pulse(void)
 {
+    if (!ju_seq_run && !ju_seq_cnt) return;                          /* (stopped inside this block: the rest of its pulses are ignored) */
     if (ju_seq_cnt) {
         uint32_t done = ju_seq_cnt_total - ju_seq_cnt;
         if (done % 24u == 0) ju_click_trig((done / 24u) % 4u == 0);
@@ -744,6 +794,7 @@ static int ju_seq_filter(int mask, int note, int on)
         ju_pat_t *t;
         if (!(mask & (1 << p))) continue;
         t = ju_seq_pat(p);
+        if (ju_seq_idx(p) < 0) continue;                              /* no pattern in this row of the song: the keys play */
         if (ju_seq_rec && p == rp && t->len && !ju_seq_cnt) {        /* the key sounds and is written */
             if (on) {
                 int s;

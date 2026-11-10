@@ -89,6 +89,13 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
   the count-in, 0 to 8 beats; CLK the level. With REC armed and a count-in, **PLAY counts first** (the header shows IN 4, 3, 2, 1) and the
   sequencer starts on the next beat, so recording does not begin directly; the keys sound during the count-in but are not recorded, and PLAY
   cancels it. The first beat of each bar clicks higher. The click is heard in the headphones and speaker, not in the USB audio.
+- **Song** (press SEQ twice more: the roll, the setup, the song): a list of up to 32 rows, each naming a pattern for the upper part and one for
+  the lower part (`--`: none, the keys have that part) and a number of repeats (1-16). A row lasts its repeats of the longer of its two patterns
+  (a shorter one wraps), and both parts change together at the end of the row. KNOB 1 moves along the rows (the empty row after the last makes a
+  new one), KNOB 2 sets the upper pattern, KNOB 3 the lower, KNOB 4 the repeats; **SCL** deletes the row, **OCT+** inserts a copy of it, **OCT-**
+  switches song mode on and off (also GLO, SEQUENCER page: SNG, and LUP for looping). With song mode on, **PLAY** plays the song from the row
+  under the cursor (the header shows SNG and the row); it stops after the last row, or starts again with LUP on. Recording during a song
+  overdubs into the pattern the row is playing. The song is saved in flash like the patterns.
 - **PLAY** starts and stops both parts together; a part whose pattern has no note is left to the keys.
 - **Keys while it plays** (GLO, the SEQUENCER page, KEY): **PLAY** (the default) the keys sound normally over the running pattern; **TRAN** a key
   transposes the pattern instead (the key is the new root: C4 plays it as written) and does not sound. The keys play the part being edited, so

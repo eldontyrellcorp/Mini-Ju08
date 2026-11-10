@@ -34,6 +34,8 @@ enum {
     G_CLICKVOL,         /* the click's level */
     G_QUANT,            /* real-time recording snaps to: 0 a step (1/16), 1 1/8, 2 1/4, 3 1/2 note */
     G_SEQKEYS,          /* a key while a pattern plays: 0 sounds (play along), 1 transposes the pattern and does not sound */
+    G_SONG,             /* song mode: PLAY plays the song's rows (patterns chained) instead of one pattern */
+    G_SONGLOOP,         /* the song starts again after its last row */
     G_COUNT
 };
 
@@ -125,3 +127,9 @@ typedef struct {
     uint8_t gate;                                    /* ticks of a step's 6 a note lasts, 1-6 */
     uint8_t pad[2];
 } ju_pat_t;
+
+/* ---- the song: rows that chain patterns */
+#define JU_SONG_ROWS 32
+#define JU_SONG_NONE 255                                 /* a part with no pattern in this row */
+typedef struct { uint8_t pat[2]; uint8_t rep; uint8_t pad; } ju_srow_t;     /* pattern of each part (0-15 or JU_SONG_NONE), repeats 1-16 */
+typedef struct { uint8_t n; uint8_t pad[3]; ju_srow_t row[JU_SONG_ROWS]; } ju_song_t;

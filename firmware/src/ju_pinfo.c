@@ -35,6 +35,7 @@ static const char *const kSync[] = {"INT", "MIDI"};
 static const char *const kMetro[] = {"OFF", "REC", "PLAY"};
 static const char *const kQuant[] = {"1/16", "1/8", "1/4", "1/2"};
 static const char *const kSeqKeys[] = {"PLAY", "TRAN"};
+static const char *const kOffOn2[] = {"OFF", "ON"};
 static const char *const kCount[] = {"OFF", "1", "2", "3", "4", "5", "6", "7", "8"};
 #define SEL(arr) (uint8_t)(sizeof(arr) / sizeof(arr[0])), arr
 
@@ -114,6 +115,8 @@ static const ju_pinfo_t kInfo[P_COUNT + G_COUNT] = {
     {"CLK", "CLICK LEVEL", 0, 0, 0},
     {"QNT", "RECORD QUANTIZE", SEL(kQuant), 0},
     {"KEY", "KEYS OVER A PATTERN", SEL(kSeqKeys), 0},
+    {"SNG", "SONG MODE", SEL(kOffOn2), 0},
+    {"LUP", "SONG LOOP", SEL(kOffOn2), 0},
 };
 
 const char *ju_pshort(int id) { return kInfo[id].shortName; }

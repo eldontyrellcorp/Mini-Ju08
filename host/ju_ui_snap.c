@@ -25,6 +25,7 @@ static int8_t ju_octave;
 static void ju_store_current(void) {}
 static int ju_store_patch(int idx) { (void)idx; return 0; }
 static int ju_store_seq(int part) { (void)part; return 0; }
+static int ju_store_song(void) { return 0; }
 
 static void save(const char *name)
 {
@@ -87,6 +88,14 @@ int main(int argc, char **argv)
         ju_pat[0][0].len = 40; ju_seq_cursor[0] = 20; ju_seq_run = 0; ju_seq_rec = 1; snprintf(path, sizeof path, "%s/seq2.ppm", dir); frame(path, 5000);
         ju_seq_rec = 0; ui.seq_sub = 1; ju_pat[0][0].len = 16; snprintf(path, sizeof path, "%s/seq3.ppm", dir); frame(path, 5000);
         ui.seq_sub = 0; ui.page = PAGE_QLINK;
+    }
+    {   /* the song page */
+        ju_song.n = 7;
+        for (int i = 0; i < 7; i++) { ju_song.row[i].pat[0] = (uint8_t)(i % 4); ju_song.row[i].pat[1] = i == 2 || i == 3 ? JU_SONG_NONE : (uint8_t)(i % 3); ju_song.row[i].rep = (uint8_t)(1 + (i * 3) % 4); }
+        ju_global[G_SONG] = 1; ju_global[G_SONGLOOP] = 1; ui.page = PAGE_SEQ; ui.seq_sub = 2; ui.song_cur = 4; ju_song_sel = 2; ju_seq_run = 1; ju_seq_req = 0;
+        snprintf(path, sizeof path, "%s/song0.ppm", dir); frame(path, 5000);
+        ui.song_cur = 7; snprintf(path, sizeof path, "%s/song1.ppm", dir); frame(path, 5000);
+        ju_seq_run = 0; ui.seq_sub = 0; ui.page = PAGE_QLINK;
     }
     ui.page = PAGE_PERF; ui.focus[PAGE_PERF] = sp_first(PAGE_PERF, NPERFPAGES - 1); ju_global[G_COUNTIN] = 4; ju_global[G_METRO] = 2;
     snprintf(path, sizeof path, "%s/metro.ppm", dir); frame(path, 5000);

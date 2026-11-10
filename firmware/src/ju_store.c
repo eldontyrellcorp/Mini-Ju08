@@ -14,6 +14,7 @@ typedef struct { uint32_t magic; ju_pat_t p[JU_SEQ_PATS]; } ju_seqobj_t;        
 _Static_assert(sizeof(ju_bankobj_t) <= ST_PAYLOAD_MAX, "a bank object fits a storage sector");
 _Static_assert(sizeof(ju_setobj_t) <= ST_PAYLOAD_MAX, "the settings object fits a storage sector");
 _Static_assert(sizeof(ju_seqobj_t) <= ST_PAYLOAD_MAX, "a part's patterns fit a storage sector");
+_Static_assert(4 + sizeof(ju_song_t) <= ST_PAYLOAD_MAX, "the song fits a storage sector");
 static ju_seqobj_t ju_seqbuf __attribute__((section(".pool")));
 static ju_bankobj_t ju_bankbuf __attribute__((section(".pool")));
 
@@ -110,6 +111,38 @@ static void ju_store_seq_boot(void)
                 if (t->type[i] > SQ_TIE) t->type[i] = SQ_REST;
             }
         }
+    }
+#endif
+}
+
+/* the song (OBJ_PROJECT0 + 3, the fourth of the sectors the patch bank leaves free) */
+#define JU_SONG_MAGIC 0x4A534F31u                    /* "JSO1" */
+typedef struct { uint32_t magic; ju_song_t s; } ju_songobj_t;
+static ju_songobj_t ju_songbuf __attribute__((section(".pool")));
+static int ju_store_song(void)
+{
+#if FELUCCA_FLASH
+    if (!flash_ok) return -1;
+    ju_songbuf.magic = JU_SONG_MAGIC;
+    ju_songbuf.s = ju_song;
+    return st_save(OBJ_PROJECT0 + 3u, &ju_songbuf, sizeof ju_songbuf);
+#else
+    return -1;
+#endif
+}
+static void ju_store_song_boot(void)
+{
+#if FELUCCA_FLASH
+    int i;
+    if (!flash_ok) return;
+    if (st_load(OBJ_PROJECT0 + 3u, &ju_songbuf, sizeof ju_songbuf) != (int)sizeof ju_songbuf || ju_songbuf.magic != JU_SONG_MAGIC) return;
+    ju_song = ju_songbuf.s;                                         /* sanitised: a damaged song cannot break the engine */
+    if (ju_song.n > JU_SONG_ROWS) ju_song.n = JU_SONG_ROWS;
+    for (i = 0; i < JU_SONG_ROWS; i++) {
+        ju_srow_t *r = &ju_song.row[i];
+        if (r->pat[0] >= JU_SEQ_PATS) r->pat[0] = JU_SONG_NONE;
+        if (r->pat[1] >= JU_SEQ_PATS) r->pat[1] = JU_SONG_NONE;
+        if (r->rep < 1 || r->rep > 16) r->rep = 1;
     }
 #endif
 }

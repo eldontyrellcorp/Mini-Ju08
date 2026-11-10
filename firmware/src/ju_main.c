@@ -198,6 +198,7 @@ static void fm1_main(void)
     ui.patch_idx[1] = 0;
     ju_store_boot();
     ju_store_seq_boot();
+    ju_store_song_boot();
     ju_patch[0] = ju_bank[ui.patch_idx[0]];
     ju_patch[1] = ju_bank[ui.patch_idx[1]];
     memcpy(ui.saved_global, ju_global, G_COUNT);
