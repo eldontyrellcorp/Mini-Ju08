@@ -67,6 +67,27 @@ int main(void)
     in = press(B_GLO); step(&in); in = press(B_GLO); step(&in);
     CHECK(ui.page == PAGE_PERF && sp_locate(PAGE_PERF, ui.focus[PAGE_PERF], 0) == 1);
 
+    /* the effects series: at most five rows a page, a page never mixes sections, KNOB 3 and FX again jump a page */
+    {
+        fxrow_t rows[FX_MAXROWS];
+        int starts[FX_MAXPAGES + 1], n, np, p, ok = 1;
+        ju_patch[0].fx.mfxType = MFX_PHA2;
+        n = fx_rows(&ju_patch[0].fx, rows); np = fx_paginate(rows, n, starts);
+        for (p = 0; p < np; p++) {
+            int k;
+            ok = ok && starts[p + 1] - starts[p] <= FX_PER_PAGE && starts[p + 1] > starts[p];
+            for (k = starts[p]; k < starts[p + 1]; k++) ok = ok && rows[k].group == rows[starts[p]].group;
+        }
+        CHECK(ok && starts[np] == n && np >= 6);
+        in = press(B_FX); step(&in); in = press(B_FX); step(&in);
+        CHECK(ui.page == PAGE_FX && ui.focus[PAGE_FX] == starts[1]);                       /* FX twice: the second page */
+        in = turn(2, 1); step(&in); CHECK(ui.focus[PAGE_FX] == starts[2]);
+        in = turn(2, -1); step(&in); in = turn(2, -1); step(&in); CHECK(ui.focus[PAGE_FX] == starts[0]);
+        in = turn(2, -1); step(&in); CHECK(ui.focus[PAGE_FX] == starts[np - 1]);          /* and round */
+        ui.focus[PAGE_FX] = 0; in = turn(0, 6); step(&in); CHECK(ui.focus[PAGE_FX] == 6 && fx_page_of(starts, np, 6) == 1);   /* KNOB 1 crosses */
+        ju_fx_load_mfx_defaults(&ju_patch[0].fx, MFX_CHO1);
+    }
+
     /* SELECT steps the group, in both directions, and leaves any other page */
     memset(&in, 0, sizeof in); in.sel = 1; step(&in); CHECK(ui.qgroup == 1);
     in.sel = -1; step(&in); step(&in); CHECK(ui.qgroup == 7);

@@ -168,10 +168,14 @@ static uint32_t cv_band_hash(const uint16_t *p)
 /* draw the page into the bands and push the ones that changed; returns how many went out */
 static int cv_present(void (*draw)(void))
 {
-    int b, sent = 0, which = 0;
+    static int which;                                    /* the buffer the next band goes into: kept across frames */
+    int b, sent = 0;
+    /* The last band of a frame is still being sent when the function returns. A new frame draws its first band at once, so
+     * it must not start in the buffer that transfer reads (that garbled the bottom of the screen after a page change):
+     * wait for the transfer first, then the two buffers alternate with every band sent. */
+    lcd_sync();
     for (b = 0; b < CV_NBANDS; b++) {
         uint32_t h;
-        /* two buffers: the one the DMA still reads is the one drawn last; lcd_blit waits for it before sending the next */
         cv_fb = cv_buf[which];
         cv_y0 = b * CV_BAND;
         cv_rect(0, cv_y0, CV_W, CV_BAND, CV_RGB(10, 10, 12));
@@ -179,7 +183,7 @@ static int cv_present(void (*draw)(void))
         h = cv_band_hash(cv_fb);
         if (h == cv_hash[b] && !cv_force) continue;
         cv_hash[b] = h;
-        lcd_blit(0, (uint32_t)cv_y0, CV_W, CV_BAND, cv_fb);
+        lcd_blit(0, (uint32_t)cv_y0, CV_W, CV_BAND, cv_fb);      /* waits for the previous band's transfer, then starts this one */
         which ^= 1;
         sent++;
     }

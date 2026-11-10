@@ -136,6 +136,30 @@ static int16_t *fx_row_val(ju_fxpatch_t *f, const fxrow_t *r)
 {
     return r->group == 0 ? &f->m[r->idx] : r->group == 1 ? &f->d[r->idx] : &f->r[r->idx];
 }
+/* The effects list in pages of up to FX_PER_PAGE rows at double size; a page never mixes the sections (CHORUS & MFX, delay,
+ * reverb, tempo). starts[] gets the first row of every page; returns the number of pages. */
+#define FX_PER_PAGE 5
+#define FX_MAXPAGES 24
+static int fx_paginate(const fxrow_t *rows, int n, int *starts)
+{
+    int i, np = 0, cnt = 0;
+    for (i = 0; i < n; i++) {
+        if (i == 0 || cnt == FX_PER_PAGE || rows[i].group != rows[i - 1].group) {
+            if (np < FX_MAXPAGES - 1) starts[np++] = i;
+            cnt = 0;
+        }
+        cnt++;
+    }
+    starts[np] = n;
+    return np;
+}
+static int fx_page_of(const int *starts, int np, int row)
+{
+    int p;
+    for (p = np - 1; p > 0; p--) if (row >= starts[p]) break;
+    return p;
+}
+
 static const uint16_t kFxCols[4] = {K_RED, K_YELLOW, K_BLUE, K_ORANGE};
 static const char *const kFxGroups[4] = {"CHORUS+MFX", "DELAY", "REVERB", "TEMPO"};
 static const char *const kFxTags[4] = {"MFX", "DLY", "REV", "BPM"};
@@ -297,10 +321,11 @@ static void ui_jump_section(int d)
         ui.focus[ui.page] = sp_first(ui.page, pg);
     } else if (ui.page == PAGE_FX) {
         fxrow_t rows[FX_MAXROWS];
-        int n = fx_rows(&ju_patch[0].fx, rows), f = ui.focus[PAGE_FX], g, ng, i;
-        g = rows[f < n ? f : 0].group;
-        ng = (g + (d > 0 ? 1 : 3)) % 4;
-        for (i = 0; i < n; i++) if (rows[i].group == ng) { ui.focus[PAGE_FX] = i; break; }
+        int starts[FX_MAXPAGES + 1];
+        int n = fx_rows(&ju_patch[0].fx, rows), np = fx_paginate(rows, n, starts), f = ui.focus[PAGE_FX], pg;
+        pg = fx_page_of(starts, np, f < n ? f : 0);
+        pg = (pg + (d > 0 ? 1 : np - 1)) % np;
+        ui.focus[PAGE_FX] = starts[pg];
     } else {
         ui_move_focus(d > 0 ? 8 : -8);
     }
@@ -495,7 +520,7 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     if (in->press & BTN(B_HOME)) { if (ui.page == PAGE_QLINK) ui_group_to(ui.qgroup + 1); else { ui.page = PAGE_QLINK; ui.write_mode = 0; } }
     if (in->press & BTN(B_EDIT)) { if (ui.page == PAGE_PANEL) ui_jump_section(1); ui.page = PAGE_PANEL; ui.write_mode = 0; }
     if (in->press & BTN(B_GLO)) { if (ui.page == PAGE_PERF) ui_jump_section(1); ui.page = PAGE_PERF; ui.write_mode = 0; }
-    if (in->press & BTN(B_FX)) { ui.page = PAGE_FX; ui.write_mode = 0; }
+    if (in->press & BTN(B_FX)) { if (ui.page == PAGE_FX) ui_jump_section(1); ui.page = PAGE_FX; ui.write_mode = 0; }
     if (in->press & BTN(B_SAVE)) { ui.page = PAGE_PATCH; ui.write_mode = 0; }
     if (in->press & BTN(B_ENV)) ui_group_to(ui.page == PAGE_QLINK && ui.qgroup == 2 ? 3 : 2);
     if (in->press & BTN(B_LFO)) ui_group_to(5);
@@ -670,27 +695,28 @@ static void d_fx(void)
 {
     ju_fxpatch_t *f = &ju_patch[0].fx;
     fxrow_t rows[FX_MAXROWS];
-    int n = fx_rows(f, rows), i, k, fo = ui.focus[PAGE_FX], first;
-    const uint8_t on[3] = {f->mfxOn, f->dlyOn, f->revOn};
-    static const char *const tn[3] = {"CHORUS", "DELAY", "REVERB"};
-    const int top = 39, rowH = 12, vis = (199 - top) / rowH;
+    int starts[FX_MAXPAGES + 1];
+    int n = fx_rows(f, rows), np = fx_paginate(rows, n, starts), fo = ui.focus[PAGE_FX], pg, k, i, g;
+    const uint8_t on[4] = {f->mfxOn, f->dlyOn, f->revOn, 1};
+    static const char *const title[4] = {"CHORUS", "DELAY", "REVERB", "TEMPO"};
     char val[24];
-    for (i = 0; i < 3; i++) {                           /* three lit tiles, like the panel's effect buttons */
-        int x = 2 + i * 79;
-        cv_rect(x, 25, 77, 12, on[i] ? kFxCols[i] : K_PANEL);
-        cv_text(x + 4, 28, tn[i], on[i] ? K_BG : K_DIM, 1);
-    }
     if (fo >= n) fo = n - 1;
-    first = fo - vis / 2;
-    if (first > n - vis) first = n - vis;
-    if (first < 0) first = 0;
-    for (k = 0; k < vis && first + k < n; k++) {
-        const fxrow_t *r = &rows[first + k];
-        int y = top + k * rowH, foc = first + k == fo, cur = 0, lo = 0, hi = 1, vw, nw;
+    pg = fx_page_of(starts, np, fo);
+    g = rows[starts[pg]].group;
+    cv_rect(0, 24, CV_W, 20, on[g] ? kFxCols[g] : K_PANEL);      /* the bar is lit while that effect is on */
+    cv_text(6, 27, title[g], on[g] ? K_BG : K_DIM, 2);
+    for (i = 0; i < np; i++) {                           /* a dot a page; the bar's own colour marks the others of this section */
+        int x = CV_W - 4 - (np - i) * 9;
+        cv_rect(x, 30, 7, 8, i == pg ? K_BG : (rows[starts[i]].group == g ? K_DIM : K_LINE));
+        if (i == pg) cv_frame(x, 30, 7, 8, K_TEXT);
+    }
+    if (!cv_sees(46, 152)) return;
+    for (k = starts[pg]; k < starts[pg + 1]; k++) {
+        const fxrow_t *r = &rows[k];
+        int y = 46 + (k - starts[pg]) * 30, foc = k == fo, cur = 0, lo = 0, hi = 1, nw, vw, vs = 2, ns;
         const char *name = "";
-        if (!cv_sees(y, rowH)) continue;
-        cv_rect(0, y, CV_W, rowH - 1, foc ? K_FOCBG : K_PANEL);
-        cv_rect(0, y, 3, rowH - 1, kFxCols[r->group]);
+        cv_rect(0, y, CV_W, 29, foc ? K_FOCBG : K_PANEL);
+        cv_rect(0, y, 3, 29, kFxCols[r->group]);
         val[0] = 0;
         switch (r->kind) {
         case 0: name = "SWITCH"; cur = on[r->idx]; ui_strcat(val, sizeof val, cur ? "ON" : "OFF"); break;
@@ -703,16 +729,16 @@ static void d_fx(void)
             break;
         }
         }
-        nw = cv_text_w(name, 1);
-        vw = cv_text_w(val, 1);
-        cv_text(8, y + 2, name, foc ? K_FOCUS : K_TEXT, 1);
-        if (8 + nw + 8 + vw <= CV_W - 4) cv_text(CV_W - vw - 4, y + 2, val, foc ? K_FOCUS : K_TEXT, 1);
-        else cv_text(CV_W - cv_text_w_1(val) - 4, y + 3, val, foc ? K_FOCUS : K_TEXT, 1);
-        if (r->kind == 2 && hi > lo) cv_rect(CV_W - 64, y + rowH - 2, (cur - lo) * 60 / (hi - lo), 1, kFxCols[r->group]);
-    }
-    if (n > vis) {                                      /* scroll position */
-        int h = (199 - top) * vis / n, y = top + (199 - top - h) * first / (n - vis);
-        cv_rect(CV_W - 2, y, 2, h, K_LINE);
+        nw = cv_text_w(name, 2);
+        vw = cv_text_w(val, 2);
+        ns = 2;
+        if (8 + nw + 10 + vw > CV_W - 6) {                 /* too wide: the label small first, then the value small */
+            ns = 1;
+            if (8 + cv_text_w(name, 1) + 10 + vw > CV_W - 6) vs = 1;
+        }
+        cv_text(8, y + (ns == 2 ? 7 : 11), name, foc ? K_FOCUS : K_TEXT, ns);
+        cv_text(CV_W - 6 - cv_text_w(val, vs), y + (vs == 2 ? 7 : 11), val, foc ? K_FOCUS : K_TEXT, vs);
+        if (r->kind == 2 && hi > lo) cv_rect(8, y + 25, (cur - lo) * (CV_W - 16) / (hi - lo), 2, kFxCols[r->group]);
     }
 }
 
