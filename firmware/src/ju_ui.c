@@ -202,6 +202,7 @@ typedef struct {
     uint8_t seq_sub;                    /* the SEQ page: 0 the steps, 1 the setup */
     uint8_t rec_used, panic_done;       /* REC was used as a modifier; PLAY held long enough for all notes off */
     uint32_t play_down_at, seq_save_at, clear_at;
+    uint8_t seq_lo;                     /* the lowest note the piano roll shows (it follows the cursor) */
 } ui_t;
 static ui_t ui = {PAGE_QLINK, 0, {0, 0, 0, 0, 0}, {8, 0}, 0, 0, {0}, -1, 0, 0, 0, 0, {0}, 1, 0, 0};
 
@@ -528,8 +529,32 @@ static void ui_group_to(int g)                         /* the Q-Link page on a g
     ui.overview_at = ui.now;
 }
 
-/* ---- the sequencer page: KNOB 1 step, 2 note, 3 step type, 4 pattern (setup: 1 length, 2 gate, 3 tempo, 4 pattern) */
+/* ---- the sequencer page, a piano roll: KNOB 1 the step, 2 the pitch, 3 the length of the note, 4 the pattern
+ * (setup: 1 the pattern's length, 2 the gate, 3 the tempo, 4 the pattern). A note is a NOTE step followed by the TIE steps it lasts
+ * through; the length knob adds and takes away ties (up to the next note), and 0 deletes the note. */
+#define ROLL_ROWS 22                                        /* semitones the roll shows */
 static ju_pat_t *ui_pat(void) { return &ju_pat[ui_layer()][ju_seq_cur[ui_layer()] % JU_SEQ_PATS]; }
+static int seq_head(const ju_pat_t *t, int i)               /* the NOTE step a step belongs to (itself, or the one its ties hang on), -1 if none */
+{
+    int k = i;
+    while (k > 0 && t->type[k] == SQ_TIE) k--;
+    return t->type[k] == SQ_NOTE ? k : -1;
+}
+static int seq_chain(const ju_pat_t *t, int head)           /* the steps the note lasts: itself and its ties */
+{
+    int n = 1;
+    while (head + n < t->len && t->type[head + n] == SQ_TIE) n++;
+    return n;
+}
+static void seq_set_len(ju_pat_t *t, int head, int want)    /* 0 deletes; no longer than the free steps up to the next note */
+{
+    int have = seq_chain(t, head), room = 1, k;
+    while (head + room < t->len && t->type[head + room] != SQ_NOTE) room++;
+    if (want > room) want = room;
+    if (want <= 0) { for (k = head; k < head + have; k++) t->type[k] = SQ_REST; return; }
+    for (k = head + 1; k < head + want; k++) t->type[k] = SQ_TIE;
+    for (k = head + want; k < head + have; k++) t->type[k] = SQ_REST;
+}
 static void ui_seq_clear(void)
 {
     ju_pat_t *t = ui_pat();
@@ -537,6 +562,14 @@ static void ui_seq_clear(void)
     for (i = 0; i < JU_SEQ_STEPS; i++) { t->type[i] = SQ_REST; t->note[i] = 60; }
     ju_seq_cursor[ui_layer()] = 0;
     ju_seq_dirty[ui_layer()] = 1;
+}
+static void ui_seq_view(void)                               /* the roll follows the note under the cursor, keeping two rows of margin */
+{
+    const ju_pat_t *t = ui_pat();
+    int len = t->len ? t->len : 16, cur = ju_seq_cursor[ui_layer()] % len, h = seq_head(t, cur), n = t->note[h >= 0 ? h : cur], lo = ui.seq_lo;
+    if (n < lo + 2) lo = n - 2;
+    if (n > lo + ROLL_ROWS - 3) lo = n - (ROLL_ROWS - 3);
+    ui.seq_lo = (uint8_t)(lo < 0 ? 0 : lo > 127 - ROLL_ROWS + 1 ? 127 - ROLL_ROWS + 1 : lo);
 }
 static void ui_seq_input(const ju_in_t *in, uint32_t now)
 {
@@ -547,15 +580,24 @@ static void ui_seq_input(const ju_in_t *in, uint32_t now)
     if (!t->len) t->len = 16;
     if (*cur >= t->len) *cur = (uint8_t)(t->len - 1);
     if (!ui.seq_sub) {
+        int c = *cur, h = seq_head(t, c);
         if (in->knob[0]) *cur = (uint8_t)(((int)*cur + in->knob[0] % t->len + t->len) % t->len);
-        if (in->knob[1]) {                                  /* the note; turning a rest makes it a note */
-            n = (int)t->note[*cur] + in->knob[1];
-            t->note[*cur] = (uint8_t)(n < 0 ? 0 : n > 127 ? 127 : n);
-            if (t->type[*cur] == SQ_REST) t->type[*cur] = SQ_NOTE;
+        if (in->knob[1]) {                                  /* the pitch of the note under the cursor (a rest becomes a note) */
+            int idx = h >= 0 ? h : c;
+            n = (int)t->note[idx] + in->knob[1];
+            t->note[idx] = (uint8_t)(n < 0 ? 0 : n > 127 ? 127 : n);
+            if (t->type[idx] == SQ_REST) t->type[idx] = SQ_NOTE;
             ju_seq_dirty[p] = 1;
         }
-        if (in->knob[2]) { t->type[*cur] = (uint8_t)(((int)t->type[*cur] + (in->knob[2] > 0 ? 1 : 2)) % 3); ju_seq_dirty[p] = 1; }
-        if (in->press & BTN(B_SCL)) { t->type[*cur] = SQ_REST; *cur = (uint8_t)((*cur + 1) % t->len); ju_seq_dirty[p] = 1; }
+        if (in->knob[2]) {                                  /* the length of the note, in steps */
+            if (h < 0) {
+                if (in->knob[2] > 0) { t->type[c] = SQ_NOTE; seq_set_len(t, c, in->knob[2]); ju_seq_dirty[p] = 1; }
+            } else {
+                seq_set_len(t, h, seq_chain(t, h) + in->knob[2]);
+                ju_seq_dirty[p] = 1;
+            }
+        }
+        if (in->press & BTN(B_SCL)) { if (h >= 0) { seq_set_len(t, h, 0); ju_seq_dirty[p] = 1; } }     /* delete the note */
     } else {
         if (in->knob[0]) {
             n = (int)t->len + in->knob[0] * ui_accel(0, now, 63);
@@ -571,6 +613,7 @@ static void ui_seq_input(const ju_in_t *in, uint32_t now)
         ju_seq_cursor[p] = 0;
         ui.save_at = now + 2000u;                           /* the selection is saved with the settings */
     }
+    ui_seq_view();
 }
 
 /* one UI frame of input */
@@ -640,6 +683,7 @@ static void ui_update(const ju_in_t *in, uint32_t now)
         if (in->knob[2]) ui_jump_section(in->knob[2]);
         if (in->knob[3]) ui_load_patch(l, (ui.patch_idx[l] + (in->knob[3] > 0 ? 1 : 63)) % 64);
     }
+    if (ui.page == PAGE_SEQ) ui_seq_view();
     if (ui.overview && now - ui.overview_at >= OVERVIEW_MS) ui.overview = 0;
 
     if ((ju_seq_dirty[0] || ju_seq_dirty[1]) && !ui.seq_save_at) ui.seq_save_at = now + 2000u;
@@ -944,24 +988,15 @@ static void d_readout(void)
         return;
     }
     if (ui.page == PAGE_SEQ) {
-        const ju_pat_t *t = &ju_pat[lay][ju_seq_cur[lay] % JU_SEQ_PATS];
-        int len = t->len ? t->len : 16, cur = ju_seq_cursor[lay] % len;
-        char b[24], v[12];
         if (ui.seq_sub) {
-            cv_text(6, y + 5, ui.clear_at ? "PRESS OCT- AGAIN TO CLEAR THE PATTERN" : "THE FOUR KNOBS SET THE FOUR ROWS", ui.clear_at ? K_RED : K_DIM, 1);
+            cv_text(6, y + 6, ui.clear_at ? "PRESS OCT- AGAIN TO CLEAR THE PATTERN" : "THE FOUR KNOBS SET THE FOUR VALUES", ui.clear_at ? K_RED : K_DIM, 1);
             cv_text(6, y + 18, "OCT- TWICE CLEARS THE PATTERN", K_DIM, 1);
-            cv_text(6, y + 30, "SEQ AGAIN: THE STEPS", K_DIM, 1);
+            cv_text(6, y + 30, "SEQ AGAIN: THE ROLL", K_DIM, 1);
             return;
         }
-        b[0] = 0;
-        ui_strcat(b, sizeof b, "STEP ");
-        ui_num(b, sizeof b, cur + 1);
-        cv_text(6, y + 5, b, K_DIM, 1);
-        if (t->type[cur] == SQ_NOTE) seq_note_name(v, t->note[cur]);
-        else { v[0] = 0; ui_strcat(v, sizeof v, t->type[cur] == SQ_TIE ? "TIE" : "REST"); }
-        cv_text(CV_W - cv_text_w(v, 2) - 6, y + 14, v, K_FOCUS, 2);
-        cv_text(6, y + 18, ju_seq_rec ? (ju_seq_run ? "REC: PLAY KEYS" : "REC: KEYS ENTER STEPS") : "REC ARMS RECORDING", ju_seq_rec ? K_RED : K_DIM, 1);
-        cv_text(6, y + 30, "KNOB 1 STEP 2 NOTE 3 TYPE 4 PATTERN", K_DIM, 1);
+        cv_text(6, y + 6, ju_seq_rec ? (ju_seq_run ? "REC: PLAY THE KEYS, THEY ARE WRITTEN" : "REC: EACH KEY WRITES THE STEP") : "REC ARMS RECORDING", ju_seq_rec ? K_RED : K_DIM, 1);
+        cv_text(6, y + 18, "1 STEP  2 PITCH  3 LENGTH  4 PATTERN", K_DIM, 1);
+        cv_text(6, y + 30, "SCL DELETES  SEQ AGAIN: SETUP", K_DIM, 1);
         return;
     }
     if (ui.page == PAGE_PATCH) {
@@ -983,67 +1018,117 @@ static void d_readout(void)
 }
 
 /* ---- the sequencer: the steps of a part's pattern, 16 at a time (4 x 4 at double size), and a setup page */
+/* The sequencer as a piano roll (after Sloop's STEP page): pitch up, the steps along, a note a bar as long as it lasts. */
+#define RL_X0 20                                            /* the keyboard strip ends here */
+#define RL_Y0 60
+#define RL_RH 6
+#define RL_Y1 (RL_Y0 + ROLL_ROWS * RL_RH)                   /* 192 */
+static int roll_x(int i) { return RL_X0 + i * (CV_W - RL_X0) / 16; }
+static int roll_y(int note, int lo) { return RL_Y0 + (ROLL_ROWS - 1 - (note - lo)) * RL_RH; }
+static int is_black(int n) { n %= 12; return n == 1 || n == 3 || n == 6 || n == 8 || n == 10; }
+
+static void d_cell(int x, int w, const char *label, const char *val, uint16_t lc, uint16_t vc)
+{
+    cv_text(x + 4, 28, label, lc, 1);
+    cv_text(x + 4, 40, val, vc, 2);
+    if (x) cv_rect(x, 26, 1, 30, K_LINE);
+}
+
+static void d_seq_roll(int p, const ju_pat_t *t, int len, int cur, uint16_t col)
+{
+    int lo = ui.seq_lo, base = (cur / 16) * 16, i, r, k, hc = seq_head(t, cur), sw = roll_x(1) - roll_x(0);
+    char b[12];
+    for (r = 0; r < ROLL_ROWS; r++) {                       /* the rows: white keys lighter, a line under every C */
+        int n = lo + ROLL_ROWS - 1 - r, y = RL_Y0 + r * RL_RH;
+        cv_rect(RL_X0, y, CV_W - RL_X0, RL_RH, is_black(n) ? CV_RGB(13, 13, 16) : CV_RGB(22, 22, 26));
+        cv_rect(0, y, RL_X0 - 1, RL_RH, is_black(n) ? CV_RGB(30, 30, 34) : CV_RGB(190, 186, 172));
+        cv_rect(0, y + RL_RH - 1, RL_X0 - 1, 1, CV_RGB(60, 58, 54));
+        if (n % 12 == 0) cv_rect(RL_X0, y + RL_RH - 1, CV_W - RL_X0, 1, K_LINE);
+    }
+    {   /* the cursor's row and column, a crosshair */
+        int n = t->note[hc >= 0 ? hc : cur], cx = roll_x(cur - base);
+        if (n >= lo && n < lo + ROLL_ROWS) cv_rect(RL_X0, roll_y(n, lo), CV_W - RL_X0, RL_RH, CV_RGB(34, 29, 12));
+        cv_rect(cx, RL_Y0, sw, ROLL_ROWS * RL_RH, CV_RGB(34, 29, 12));
+    }
+    for (i = 4; i < 16; i += 4) cv_rect(roll_x(i), RL_Y0, 1, ROLL_ROWS * RL_RH, CV_RGB(48, 48, 54));    /* the beats */
+    if (base + 16 > len) cv_rect(roll_x(len - base), RL_Y0, CV_W - roll_x(len - base), ROLL_ROWS * RL_RH, K_BG);   /* past the end of the pattern */
+    for (i = 0; i < len; i++) {                             /* the notes: a bar from its step as far as its ties */
+        int n, e, s0, e0, x0, x1, y, h, playing;
+        uint16_t c;
+        if (t->type[i] != SQ_NOTE) continue;
+        n = seq_chain(t, i);
+        e = i + n;
+        s0 = i < base ? base : i;
+        e0 = e > base + 16 ? base + 16 : e;
+        if (e0 <= s0) continue;
+        x0 = roll_x(s0 - base) + 1;
+        x1 = roll_x(e0 - base) - 1;
+        if (e == e0) x1 -= sw * (6 - (t->gate < 1 ? 1 : t->gate > 6 ? 6 : t->gate)) / 6;     /* the last step lasts the gate only */
+        if (x1 < x0 + 2) x1 = x0 + 2;
+        h = RL_RH - 1;
+        if (t->note[i] < lo) y = RL_Y1 - 2; else if (t->note[i] >= lo + ROLL_ROWS) y = RL_Y0; else y = roll_y(t->note[i], lo) + 1;
+        if (t->note[i] < lo || t->note[i] >= lo + ROLL_ROWS) h = 2;                           /* off the roll: a mark at its edge */
+        playing = ju_seq_run && ju_seq_pos[p] >= i && ju_seq_pos[p] < e;
+        c = i == hc ? K_FOCUS : (playing ? K_TEXT : col);
+        cv_rect(x0, y, x1 - x0, h, c);
+        if (i >= base && x1 - x0 > 4) cv_rect(x0, y, 2, h, K_BG);                              /* a notch where it starts */
+    }
+    if (ju_seq_run && ju_seq_pos[p] >= base && ju_seq_pos[p] < base + 16)                       /* the step playing */
+        cv_rect(roll_x(ju_seq_pos[p] - base), RL_Y0, 2, ROLL_ROWS * RL_RH, K_LEDON);
+    for (r = 0; r < ROLL_ROWS; r++) {                       /* the C labels, last: no row paints over them */
+        int n = lo + ROLL_ROWS - 1 - r, y = RL_Y0 + r * RL_RH;
+        if (n % 12 == 0 && cv_sees(y - 1, 9)) { b[0] = 0; ui_strcat(b, sizeof b, "C"); ui_num(b, sizeof b, n / 12 - 1); cv_text(2, y - 1, b, K_BG, 1); }
+    }
+    cv_rect(0, RL_Y1, CV_W, 8, K_BG);                       /* the ruler: a tick a step, longer on the beats, a marker at the cursor */
+    for (k = 0; k <= 16; k++) cv_rect(roll_x(k), RL_Y1 + 1, 1, k % 4 ? 2 : 4, K_DIM);
+    cv_rect(roll_x(cur - base) + sw / 2 - 2, RL_Y1 + 1, 5, 4, K_FOCUS);
+    cv_rect(roll_x(cur - base) + sw / 2 - 1, RL_Y1 + 5, 3, 2, K_FOCUS);
+}
+
 static void d_seq(void)
 {
     int p = ui_layer();
     const ju_pat_t *t = &ju_pat[p][ju_seq_cur[p] % JU_SEQ_PATS];
-    int len = t->len ? t->len : 16, cur = ju_seq_cursor[p] % len, base = (cur / 16) * 16, i;
-    char b[24], b2[12];
+    int len = t->len ? t->len : 16, cur = ju_seq_cursor[p] % len, h = seq_head(t, cur);
+    char b[24], v[12];
     uint16_t col = p ? K_BLUE : K_ORANGE;
-    cv_rect(0, 24, CV_W, 20, col);
-    b[0] = 0;
-    ui_strcat(b, sizeof b, ui.seq_sub ? "SETUP " : "SEQ ");
-    ui_strcat(b, sizeof b, p ? "L" : "U");
-    ui_strcat(b, sizeof b, " P");
-    if (ju_seq_cur[p] < 9) ui_strcat(b, sizeof b, "0");
-    ui_num(b, sizeof b, ju_seq_cur[p] + 1);
-    cv_text(6, 27, b, K_BG, 2);
-    if (!ui.seq_sub) {
-        b[0] = 0;
-        ui_num(b, sizeof b, base + 1); ui_strcat(b, sizeof b, "-"); ui_num(b, sizeof b, base + 16 > len ? len : base + 16);
-        ui_strcat(b, sizeof b, "/"); ui_num(b, sizeof b, len);
-        cv_text(CV_W - 6 - cv_text_w(b, 1), 31, b, K_BG, 1);
-    }
-    if (!cv_sees(46, 152)) return;
-    if (ui.seq_sub) {                                      /* the setup: LENGTH, GATE, TEMPO, PATTERN, one a knob */
+    cv_rect(0, 24, CV_W, 34, K_BG);
+    if (ui.seq_sub) {                                       /* the setup: four big values, as Sloop shows its settings */
         static const char *const nm[4] = {"LENGTH", "GATE", "TEMPO", "PATTERN"};
-        for (i = 0; i < 4; i++) {
-            int y = 46 + i * 30;
-            b[0] = 0;
-            switch (i) {
-            case 0: ui_num(b, sizeof b, len); ui_strcat(b, sizeof b, " STEPS"); break;
-            case 1: ui_num(b, sizeof b, t->gate * 100 / 6); ui_strcat(b, sizeof b, " %"); break;
-            case 2: ui_num(b, sizeof b, 40 + ju_global[G_TEMPO]); ui_strcat(b, sizeof b, ju_global[G_SYNC] ? " MIDI" : " BPM"); break;
-            default: ui_num(b, sizeof b, ju_seq_cur[p] + 1); ui_strcat(b, sizeof b, " OF 16"); break;
+        static const char *const un[4] = {"STEPS", "OF STEP", 0, "OF 16"};
+        int q;
+        for (q = 0; q < 4; q++) {
+            int x = (q & 1) * 120, y = 26 + (q >> 1) * 86;
+            v[0] = 0;
+            switch (q) {
+            case 0: ui_num(v, sizeof v, len); break;
+            case 1: ui_num(v, sizeof v, t->gate * 100 / 6); ui_strcat(v, sizeof v, "%"); break;
+            case 2: ui_num(v, sizeof v, 40 + ju_global[G_TEMPO]); break;
+            default: if (ju_seq_cur[p] < 9) ui_strcat(v, sizeof v, "0"); ui_num(v, sizeof v, ju_seq_cur[p] + 1); break;
             }
-            cv_rect(0, y, CV_W, 29, K_PANEL);
-            cv_rect(0, y, 3, 29, col);
-            cv_text(8, y + 4, "KNOB", K_DIM, 1);
-            b2[0] = 0; ui_num(b2, sizeof b2, i + 1);
-            cv_text(8 + 30, y + 4, b2, K_DIM, 1);
-            cv_text(8, y + 13, nm[i], K_TEXT, 2);
-            cv_text(CV_W - 6 - cv_text_w(b, 2), y + 8, b, K_FOCUS, 2);
+            cv_rect(x + 2, y, 116, 82, K_PANEL);
+            cv_rect(x + 2, y, 116, 3, col);
+            cv_text(x + 8, y + 9, nm[q], col, 2);
+            cv_text(x + 8, y + 32, v, K_TEXT, 3);
+            cv_text(x + 8, y + 62, q == 2 ? (ju_global[G_SYNC] ? "MIDI CLOCK" : "BPM") : un[q], K_DIM, 1);
+            b[0] = 0; ui_strcat(b, sizeof b, "KNOB "); ui_num(b, sizeof b, q + 1);
+            cv_text(x + 110 - cv_text_w(b, 1), y + 62, b, K_LINE, 1);
         }
         return;
     }
-    for (i = 0; i < 16; i++) {                             /* the steps */
-        int idx = base + i, x = (i % 4) * 60, y = 46 + (i / 4) * 38;
-        int on = idx < len, isCur = on && idx == cur, playing = on && ju_seq_run && ju_seq_pos[p] == idx;
-        uint16_t ink = isCur ? K_FOCUS : K_TEXT;
-        cv_rect(x + 1, y + 1, 58, 36, isCur ? K_FOCBG : (on ? K_PANEL : K_BG));
-        if (playing) cv_frame(x + 1, y + 1, 58, 36, K_LEDON);
-        if (!on) continue;
-        b2[0] = 0; ui_num(b2, sizeof b2, idx + 1);
-        cv_text(x + 4, y + 4, b2, isCur ? K_FOCUS : K_DIM, 1);
-        if (t->type[idx] == SQ_NOTE) {
-            seq_note_name(b, t->note[idx]);
-            cv_text(x + (60 - cv_text_w(b, 2)) / 2, y + 16, b, ink, 2);
-        } else if (t->type[idx] == SQ_TIE) {
-            cv_text(x + (60 - cv_text_w("TIE", 2)) / 2, y + 16, "TIE", isCur ? K_FOCUS : K_YELLOW, 2);
-        } else {
-            cv_rect(x + 22, y + 22, 16, 2, isCur ? K_FOCUS : K_LINE);
-        }
-    }
+    /* the four values above the roll: STEP, NOTE, LEN, PATTERN */
+    b[0] = 0; ui_strcat(b, sizeof b, "STEP /"); ui_num(b, sizeof b, len);
+    v[0] = 0; ui_num(v, sizeof v, cur + 1);
+    d_cell(0, 60, b, v, col, K_TEXT);
+    if (h >= 0) seq_note_name(v, t->note[h]); else { v[0] = 0; ui_strcat(v, sizeof v, "---"); }
+    d_cell(60, 60, "NOTE", v, col, h >= 0 ? K_TEXT : K_DIM);
+    v[0] = 0;
+    if (h >= 0) ui_num(v, sizeof v, seq_chain(t, h)); else ui_strcat(v, sizeof v, "-");
+    d_cell(120, 60, "LEN", v, col, h >= 0 ? K_TEXT : K_DIM);
+    v[0] = 0; ui_strcat(v, sizeof v, p ? "L" : "U"); if (ju_seq_cur[p] < 9) ui_strcat(v, sizeof v, "0"); ui_num(v, sizeof v, ju_seq_cur[p] + 1);
+    d_cell(180, 60, "PATTERN", v, col, K_TEXT);
+    if (!cv_sees(RL_Y0, RL_Y1 + 8 - RL_Y0)) return;
+    d_seq_roll(p, t, len, cur, col);
 }
 
 static void ui_draw(void)

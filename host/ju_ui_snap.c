@@ -77,14 +77,15 @@ int main(int argc, char **argv)
     for (g = 0; g < 4; g++) { fxrow_t rows[FX_MAXROWS]; int st[FX_MAXPAGES + 1]; int n = fx_rows(&ju_patch[0].fx, rows), np = fx_paginate(rows, n, st); ui.page = PAGE_FX; ui.focus[PAGE_FX] = st[g < np ? g : 0] + 1; snprintf(path, sizeof path, "%s/fx%d.ppm", dir, g); frame(path, 5000); }
     ju_patch[0].fx.mfxType = MFX_PCH2; ju_patch[0].fx.mfxOn = 1; ju_patch[0].fx.revOn = 1;
     ui.page = PAGE_FX; ui.focus[PAGE_FX] = 2; snprintf(path, sizeof path, "%s/fx2.ppm", dir); frame(path, 5000);
-    {   /* the sequencer: a pattern with notes, rests and ties, the cursor and a playing step */
-        static const int nn[16] = {48, 0, 55, 0, 60, 0, 63, 0, 58, 58, 0, 0, 53, 0, 0, 65};
-        static const char *tt = "NRNTNRNRNTRRNRRN";
+    {   /* the sequencer: a bass line with ties, a rest, the cursor, a playing step, then a long pattern, recording, the setup */
+        static const int nn[16] = {48, 0, 55, 0, 60, 0, 63, 63, 58, 58, 0, 0, 53, 0, 0, 65};
+        static const char *tt = "NTNRNRNTNTRRNRTN";
         for (int i = 0; i < 16; i++) { ju_pat[0][0].note[i] = (uint8_t)(nn[i] ? nn[i] : 60); ju_pat[0][0].type[i] = tt[i] == 'N' ? SQ_NOTE : tt[i] == 'T' ? SQ_TIE : SQ_REST; }
-        ju_pat[0][0].len = 16; ju_seq_cursor[0] = 6; ju_seq_run = 1; ju_seq_pos[0] = 9;
-        ui.page = PAGE_SEQ; ui.seq_sub = 0; snprintf(path, sizeof path, "%s/seq0.ppm", dir); frame(path, 5000);
-        ju_pat[0][0].len = 64; ju_seq_cursor[0] = 40; ju_seq_run = 0; ju_seq_rec = 1; snprintf(path, sizeof path, "%s/seq1.ppm", dir); frame(path, 5000);
-        ju_seq_rec = 0; ui.seq_sub = 1; ju_pat[0][0].len = 16; snprintf(path, sizeof path, "%s/seq2.ppm", dir); frame(path, 5000);
+        ju_pat[0][0].len = 16; ju_pat[0][0].gate = 4; ju_seq_cursor[0] = 6; ju_seq_run = 1; ju_seq_pos[0] = 9;
+        ui.page = PAGE_SEQ; ui.seq_sub = 0; ui.seq_lo = 0; ju_seq_cursor[0] = 4; snprintf(path, sizeof path, "%s/seq0.ppm", dir); frame(path, 5000);
+        ju_seq_cursor[0] = 7; snprintf(path, sizeof path, "%s/seq1.ppm", dir); frame(path, 5000);
+        ju_pat[0][0].len = 40; ju_seq_cursor[0] = 20; ju_seq_run = 0; ju_seq_rec = 1; snprintf(path, sizeof path, "%s/seq2.ppm", dir); frame(path, 5000);
+        ju_seq_rec = 0; ui.seq_sub = 1; ju_pat[0][0].len = 16; snprintf(path, sizeof path, "%s/seq3.ppm", dir); frame(path, 5000);
         ui.seq_sub = 0; ui.page = PAGE_QLINK;
     }
     ui.page = PAGE_PATCH; ui.focus[PAGE_PATCH] = 25; snprintf(path, sizeof path, "%s/patch.ppm", dir); frame(path, 5000);

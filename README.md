@@ -71,11 +71,14 @@ One pattern for each part, so the two parts can play different sequences: up to 
 rest or a **tie** (the note keeps sounding through the step). 16 patterns to choose from per part, saved in flash two seconds after
 a change (when it is stopped and nothing sounds). It plays through the part's voices, so the patch's assign mode and portamento apply.
 
-- **SEQ** opens the steps: four by four at double size, 16 at a time (a 64-step pattern is four windows that follow the cursor); the
-  step playing is outlined in red. KNOB 1 moves the cursor, KNOB 2 sets the note (turning a rest makes it a note), KNOB 3 the step type
-  (note, tie, rest), KNOB 4 the pattern. **SCL** clears the step and moves on. ALGORITHM chooses the part.
-- **SEQ again** opens the setup: KNOB 1 the length (1-64), KNOB 2 the gate (how long a note lasts in its step: 17 to 100 %), KNOB 3 the
-  tempo, KNOB 4 the pattern. OCT- twice clears the pattern.
+- **SEQ** opens a **piano roll** (after Sloop's STEP page): the notes as bars, pitch up and the steps along, 16 steps at a time (a 64-step
+  pattern is four windows that follow the cursor) and 22 semitones that follow the note under the cursor, with a keyboard strip, beat
+  lines and a ruler. A note lasts as many steps as its bar is long (a tie is just a longer bar); the last step of a bar lasts the gate
+  only. The step playing is a red line, the cursor a crosshair. Above the roll: STEP, NOTE, LEN (the note's length in steps) and the
+  PATTERN. KNOB 1 moves the cursor, KNOB 2 sets the pitch (turning on a rest makes a note), KNOB 3 the length of the note (up to the
+  next note; 0 deletes it), KNOB 4 the pattern. **SCL** deletes the note under the cursor.
+- **SEQ again** opens the setup: four large values, KNOB 1 the length of the pattern (1-64), KNOB 2 the gate (how long a note lasts in
+  its last step, 17 to 100 %), KNOB 3 the tempo, KNOB 4 the pattern. OCT- twice clears the pattern.
 - **PLAY** starts and stops both parts together; a part whose pattern has no note is left to the keys.
 - **While it plays, a key transposes** the pattern (the key is the new root: C4 plays it as written) and does not sound.
 - **REC** arms recording of the part being edited. Stopped: each key you press sounds and is written to the cursor step, which moves

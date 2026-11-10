@@ -90,7 +90,7 @@ int main(void)
         ju_fx_load_mfx_defaults(&ju_patch[0].fx, MFX_CHO1);
     }
 
-    /* the SEQ page: the steps, then the setup; the knobs edit the pattern of the part being edited */
+    /* the SEQ page, a piano roll: KNOB 1 step, 2 pitch, 3 length of the note, 4 pattern; SCL deletes the note */
     {
         ju_global[G_PANEL] = 0; ju_seq_cur[0] = 0; ju_pat[0][0].len = 8;
         for (int i = 0; i < 64; i++) { ju_pat[0][0].type[i] = SQ_REST; ju_pat[0][0].note[i] = 60; }
@@ -98,18 +98,36 @@ int main(void)
         in = turn(0, 3); step(&in); CHECK(ju_seq_cursor[0] == 3);
         in = turn(0, -5); step(&in); CHECK(ju_seq_cursor[0] == 6);                                      /* wraps within the length (8) */
         ju_seq_cursor[0] = 2;
-        in = turn(1, 1); step(&in); CHECK(ju_pat[0][0].note[2] == 61 && ju_pat[0][0].type[2] == SQ_NOTE);    /* a note turns a rest into a note */
+        in = turn(1, 1); step(&in); CHECK(ju_pat[0][0].note[2] == 61 && ju_pat[0][0].type[2] == SQ_NOTE);    /* a pitch turns a rest into a note */
         in = turn(1, -3); step(&in); CHECK(ju_pat[0][0].note[2] == 58);
-        in = turn(2, 1); step(&in); CHECK(ju_pat[0][0].type[2] == SQ_TIE);
-        in = turn(2, 1); step(&in); CHECK(ju_pat[0][0].type[2] == SQ_REST);
-        in = turn(2, -1); step(&in); CHECK(ju_pat[0][0].type[2] == SQ_TIE);
-        ju_pat[0][0].type[2] = SQ_NOTE;
-        in = press(B_SCL); step(&in); CHECK(ju_pat[0][0].type[2] == SQ_REST && ju_seq_cursor[0] == 3 && ui.page == PAGE_SEQ);    /* SCL: clear and move on */
+        in = turn(2, 2); step(&in);                                                                      /* the length: two more steps */
+        CHECK(ju_pat[0][0].type[3] == SQ_TIE && ju_pat[0][0].type[4] == SQ_TIE && ju_pat[0][0].type[5] == SQ_REST);
+        CHECK(seq_chain(&ju_pat[0][0], 2) == 3);
+        in = turn(2, -1); step(&in); CHECK(ju_pat[0][0].type[3] == SQ_TIE && ju_pat[0][0].type[4] == SQ_REST);   /* shorter: the tie goes */
+        ju_seq_cursor[0] = 3;                                                                            /* on the tie: the same note */
+        in = turn(1, 2); step(&in); CHECK(ju_pat[0][0].note[2] == 60 && ju_pat[0][0].type[3] == SQ_TIE);  /* pitch edits the head */
+        in = turn(2, 1); step(&in); CHECK(seq_chain(&ju_pat[0][0], 2) == 3);                              /* length edits the head too */
+        ju_pat[0][0].type[5] = SQ_NOTE; ju_pat[0][0].note[5] = 70;
+        in = turn(2, 5); step(&in); CHECK(seq_chain(&ju_pat[0][0], 2) == 3 && ju_pat[0][0].type[5] == SQ_NOTE);   /* stops at the next note */
+        in = turn(2, -9); step(&in); CHECK(ju_pat[0][0].type[2] == SQ_REST && ju_pat[0][0].type[3] == SQ_REST && ju_pat[0][0].type[4] == SQ_REST);   /* 0 deletes */
+        CHECK(ju_pat[0][0].type[5] == SQ_NOTE);                                                          /* the next note is untouched */
+        ju_seq_cursor[0] = 6; in = turn(2, 2); step(&in);                                               /* length on a rest: a new note */
+        CHECK(ju_pat[0][0].type[6] == SQ_NOTE && ju_pat[0][0].type[7] == SQ_TIE);
+        ju_seq_cursor[0] = 7; in = press(B_SCL); step(&in);                                              /* SCL on a tie: deletes the whole note */
+        CHECK(ju_pat[0][0].type[6] == SQ_REST && ju_pat[0][0].type[7] == SQ_REST && ui.page == PAGE_SEQ && ju_seq_cursor[0] == 7);
         CHECK(ju_seq_dirty[0]);
+        {   /* the roll follows the note under the cursor */
+            ju_pat[0][0].note[1] = 100; ju_pat[0][0].type[1] = SQ_NOTE; ju_seq_cursor[0] = 1; in = turn(0, 0); in.knob[1] = 0; step(&in);
+            CHECK(ui.seq_lo + ROLL_ROWS - 1 >= 100 && ui.seq_lo <= 100);
+            ju_pat[0][0].note[1] = 20; in = turn(1, 1); step(&in);
+            CHECK(ui.seq_lo <= 21 && ui.seq_lo + ROLL_ROWS - 1 >= 21);
+            ju_pat[0][0].type[1] = SQ_REST;
+        }
         in = turn(3, 1); step(&in); CHECK(ju_seq_cur[0] == 1 && ju_seq_cursor[0] == 0);
         in = turn(3, -1); step(&in); in = turn(3, -1); step(&in); CHECK(ju_seq_cur[0] == 15);          /* the patterns wrap */
         ju_seq_cur[0] = 0;
         in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 1);
+        ju_pat[0][0].len = 8;
         in = turn(0, 4); step(&in); CHECK(ju_pat[0][0].len > 8);
         ju_pat[0][0].len = 8;
         in = turn(0, -100); step(&in); CHECK(ju_pat[0][0].len == 1);
