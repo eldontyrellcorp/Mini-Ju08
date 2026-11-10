@@ -18,8 +18,8 @@ the tracks, the old engines and the old screens with the Jupiter-8.
 | Overflow, instability, stuck voices | 800 random patches, notes, effects and controllers under UBSan |
 | The firmware builds, links and passes the project's image checks | `./build.sh` |
 
-**Not done:** running on hardware, listening tests, the CPU cost on the chip (see below), the web editor and the update entry
-(M-UPGRADE), comparison with a real Jupiter-8.
+**Not done:** running on hardware, listening tests, the CPU cost on the chip (see below), the web editor, comparison with a real Jupiter-8.
+The update entry (M-UPGRADE, Mini-Tone's `ota.c`) is in, so `tools/fm1_install.py` can update a running Mini-Ju08 over USB; it has not been tried on a device either.
 
 ## What it does
 
@@ -82,8 +82,8 @@ FW_MAIN=felucca.c ./build.sh   # Mini-Tone itself
 
 The package keeps Mini-Tone's identity string (`FM-1_900`): installing it replaces whatever FM-1 firmware is on the device. Installing
 firmware is at your own risk; if an install fails and the FM-1 no longer starts, recovery needs
-[FM-1-transporter](https://github.com/kurogedelic/FM-1-transporter). This firmware has no update entry, so a later install goes through UBOOT
-(OCT- + OCT+ held 5 s, or the SysEx the installer sends). The device shows up as "Mini-Ju08" over USB (the update loader as "Felucca Update"); `tools/fm1_install.py` matches both.
+[FM-1-transporter](https://github.com/kurogedelic/FM-1-transporter). A first build (before 2026-11-10) had no update entry: a device running it cannot be updated over USB and needs UBOOT
+(OCT- + OCT+ held 5 s) and a tool that writes the flash (see Mini-Tone's README, "If the FM-1 does not start"). The device shows up as "Mini-Ju08" over USB (the update loader as "Felucca Update"); `tools/fm1_install.py` matches both.
 
 ## CPU
 

@@ -25,6 +25,27 @@ enum { EN_SELECT = 0, EN_ALGO = 1, EN_PRESET = 6, EN_K1 = 2, EN_K2 = 3, EN_K3 = 
 #include "storage.c"
 #endif
 #include "ju_store.c"
+#if FELUCCA_OTA
+/* the update screen (ota_hw.c) draws with Mini-Tone's text calls: here, one centred line in a band */
+typedef int af_t;
+static const af_t AF_M = 1, AF_S = 0;                  /* the large and the small face */
+#define T_BG K_BG
+#define T_TEXT K_TEXT
+#define T_THEME K_FOCUS
+static void draw_text_box(int x, int y, int w, const af_t *f, const char *s, uint16_t c, int flag)
+{
+    int scale = *f ? 2 : 1;
+    (void)flag;
+    cv_fb = cv_buf[0];
+    cv_y0 = (y / CV_BAND) * CV_BAND;
+    cv_rect(0, cv_y0, CV_W, CV_BAND, K_BG);
+    cv_text(x + (w - cv_text_w(s, scale)) / 2, cv_y0 + 3, s, c, scale);
+    lcd_blit(0, (uint32_t)cv_y0, CV_W, CV_BAND, cv_fb);
+    lcd_sync();
+}
+#include "ota.c"
+#include "ota_hw.c"
+#endif
 
 static void timer5_start(void) { fm1_timer5_start(isr_timer5, 4); }   /* above ALNK0 (3): the scan nests into the render */
 
@@ -158,6 +179,9 @@ static void fm1_main(void)
     uint32_t ms, last_draw = 0, i;
     ju_in_t in;
     ju_boot_flash();
+#if FELUCCA_OTA
+    if (flash_ok) ota_boot_cleanup();                   /* the staging area an update left */
+#endif
     fm1_input_init();
     fm1_adc_init();
     ju_led_init();
@@ -212,6 +236,16 @@ static void fm1_main(void)
                 fm1_enter_uboot();
             }
         }
+#if FELUCCA_OTA
+        ota_service();                                  /* the installer's handshake */
+        if (usb.ota_req) {                              /* its upgrade command */
+            usb.ota_req = 0;
+            ju_panic_req = 1;
+            fm1_delay_ms(10);
+            if (flash_ok) ota_session();                /* returns only if nothing was committed */
+            cv_force = 1;
+        }
+#endif
         if (usb.uboot_req) {                            /* SysEx F0 22 24 35 7D F7 from the host */
             fm1_audio_stop();
             usb_detach();

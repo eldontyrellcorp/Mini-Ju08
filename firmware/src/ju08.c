@@ -8,7 +8,7 @@
 #define FELUCCA_FLASH 1
 #endif
 #ifndef FELUCCA_OTA
-#define FELUCCA_OTA 0                /* the M-UPGRADE entry and the web editor are Mini-Tone's: a later step */
+#define FELUCCA_OTA 1                /* the M-UPGRADE entry: the installer talks to the running firmware (no web editor) */
 #endif
 #ifndef FELUCCA_CDC
 #define FELUCCA_CDC 0
