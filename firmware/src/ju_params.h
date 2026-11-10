@@ -33,6 +33,7 @@ enum {
     G_COUNTIN,          /* beats of count-in before a recording starts: 0 = none */
     G_CLICKVOL,         /* the click's level */
     G_QUANT,            /* real-time recording snaps to: 0 a step (1/16), 1 1/8, 2 1/4, 3 1/2 note */
+    G_SEQKEYS,          /* a key while a pattern plays: 0 sounds (play along), 1 transposes the pattern and does not sound */
     G_COUNT
 };
 

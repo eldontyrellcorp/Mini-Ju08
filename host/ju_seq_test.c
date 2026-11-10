@@ -75,8 +75,8 @@ int main(void)
     CHECK(count(60, 1, 0) == 6 && count(72, 1, 1) == 8);
     CHECK(near(ms(nth(72, 1, 1, 1)) - ms(nth(72, 1, 1, 0)), 375, 2));
 
-    /* 4. a key while it plays: the pattern is transposed (the key is the new root, C4 as written), the key does not sound */
-    setup();
+    /* 4. KEYS = TRAN: a key while it plays transposes the pattern (the key is the new root, C4 as written) and does not sound */
+    setup(); ju_global[G_SEQKEYS] = 1;
     { int n[2] = {61, 64}; pat(0, 2, 3, n, "NN"); }
     ju_seq_req = 1;
     for (int i = 0; i < 20; i++) block();
@@ -87,6 +87,18 @@ int main(void)
     /* an empty part is played normally while the other runs */
     ju_note_on_m(2, 50); for (int i = 0; i < 5; i++) block();
     CHECK(count(50, 1, 1) == 1);
+
+    /* 4b. KEYS = PLAY (the default): a key sounds over the running pattern, which stays where it is */
+    setup();
+    { int n[2] = {61, 64}; pat(0, 2, 3, n, "NN"); }
+    CHECK(ju_global[G_SEQKEYS] == 0);
+    ju_seq_req = 1;
+    for (int i = 0; i < 20; i++) block();
+    ju_note_on_m(1, 67);
+    for (int i = 0; i < 44100 / 32; i++) block();
+    CHECK(count(67, 1, 0) == 1);                                                          /* the key sounded */
+    CHECK(count(61, 1, 0) > 0 && count(64, 1, 0) > 0 && count(61 + 7, 1, 0) == 0);       /* the pattern did not move */
+    ju_note_off_m(1, 67); ju_seq_req = 2; block();
 
     /* 5. stop releases; start again begins at step 0 */
     ju_seq_req = 2; block(); block();

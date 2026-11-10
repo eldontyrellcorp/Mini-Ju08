@@ -90,10 +90,12 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
   sequencer starts on the next beat, so recording does not begin directly; the keys sound during the count-in but are not recorded, and PLAY
   cancels it. The first beat of each bar clicks higher. The click is heard in the headphones and speaker, not in the USB audio.
 - **PLAY** starts and stops both parts together; a part whose pattern has no note is left to the keys.
-- **While it plays, a key transposes** the pattern (the key is the new root: C4 plays it as written) and does not sound.
+- **Keys while it plays** (GLO, the SEQUENCER page, KEY): **PLAY** (the default) the keys sound normally over the running pattern; **TRAN** a key
+  transposes the pattern instead (the key is the new root: C4 plays it as written) and does not sound. The keys play the part being edited, so
+  with a pattern on one part, ALGORITHM switches to the other part to play on voices of its own.
 - **REC** arms recording of the part being edited. Stopped: each key you press sounds and is written to the cursor step, which moves
   on (step entry). Playing: the keys sound and are written to the nearest step; a key held over steps ties them (real time).
-- **Tempo and clock:** the tempo is the global BPM (40-295, the same as the effects'). On the Performance page, SEQ CLOCK chooses
+- **Tempo and clock:** the tempo is the global BPM (40-295, the same as the effects'). On the Performance page, the SEQUENCER page's SYN chooses
   INT or MIDI: with MIDI, the sequencer follows the clock (24 pulses a quarter note) and Start, Continue and Stop from USB or TRS
   MIDI, and PLAY only arms it.
 

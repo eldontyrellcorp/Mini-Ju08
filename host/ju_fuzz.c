@@ -53,6 +53,7 @@ int main(int argc, char **argv)
                 for (i = 0; i < JU_SEQ_STEPS; i++) { t->note[i] = (uint8_t)(rnd() % 128); t->type[i] = (uint8_t)(rnd() % 3); }
             }
             ju_global[G_SYNC] = (uint8_t)(rnd() & 1);
+            ju_global[G_SEQKEYS] = (uint8_t)(rnd() & 1); ju_global[G_QUANT] = (uint8_t)(rnd() % 4);
             ju_global[G_TEMPO] = (uint8_t)rnd();
             ju_seq_rec = (uint8_t)(rnd() % 3 == 0);
             ju_global[G_METRO] = (uint8_t)(rnd() % 3); ju_global[G_COUNTIN] = (uint8_t)(rnd() % 9); ju_global[G_CLICKVOL] = (uint8_t)rnd();

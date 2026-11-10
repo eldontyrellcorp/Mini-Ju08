@@ -671,7 +671,7 @@ static void ju_seq_step(int p)
     nexttie = t->len > 1 && t->type[(pos + 1) % t->len] == SQ_TIE;
     if (type == SQ_NOTE) {
         if (ju_seq_snd[p] >= 0) ju_seq_release(p);
-        n = (int)t->note[pos] + ju_seq_trans[p];
+        n = (int)t->note[pos] + (ju_global[G_SEQKEYS] ? ju_seq_trans[p] : 0);
         n = n < 0 ? 0 : n > 127 ? 127 : n;
         ju_layer_key_down(p, n);
         ju_seq_snd[p] = (int16_t)n;
@@ -760,7 +760,7 @@ static int ju_seq_filter(int mask, int note, int on)
             } else if (ju_seq_rec_key[p] == note) ju_seq_rec_key[p] = -1;
             continue;
         }
-        if (ju_seq_run && ju_seq_active(p)) {                        /* the key is the new root and does not sound */
+        if (ju_seq_run && ju_global[G_SEQKEYS] && ju_seq_active(p)) {   /* TRAN: the key is the new root and does not sound (PLAY: it sounds, over the pattern) */
             if (on) ju_seq_trans[p] = (int8_t)(note - 60);
             mask &= ~(1 << p);
         }
