@@ -9,7 +9,9 @@
  *   ALGORITHM       Upper / Lower part                                  MASTER   volume (the pot)
  *   HOME            Q-Link page (again: next group)    EDIT PANEL    GLO PERFORMANCE    FX EFFECTS    SAVE PATCHES
  *   ENV             ENV-1 / ENV-2      LFO  LFO group      SEQ  VCO group      SCL  PLAY group
- *   ARP             arpeggio on / off  PLAY  all notes off  REC held + a knob: that dial back to the saved value
+ *   ARP             arpeggio on / off
+ *   SEQ             the sequencer (again: its setup)    PLAY  start / stop (held: all notes off)
+ *   REC             tapped: arm recording (step entry, or real time while playing); held + a knob: that dial back to the saved value
  *   OCT- / OCT+     octave of the keys (on the PATCHES page: back / load or write) */
 
 /* panel palette: black panel, cream print, the Jupiter's band of bright button colours */
@@ -28,7 +30,7 @@
 #define K_FOCUS CV_RGB(255, 196, 40)
 #define K_FOCBG CV_RGB(52, 44, 18)
 
-enum { PAGE_QLINK, PAGE_PANEL, PAGE_PERF, PAGE_FX, PAGE_PATCH, PAGE_COUNT };
+enum { PAGE_QLINK, PAGE_PANEL, PAGE_PERF, PAGE_FX, PAGE_PATCH, PAGE_SEQ, PAGE_COUNT };
 enum { B_FX, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC, B_OCTDN, B_OCTUP, NB };
 #define BTN(b) (1u << (b))
 
@@ -38,6 +40,7 @@ typedef struct {
     int sel, algo, preset;           /* SELECT, ALGORITHM, PRESETS */
     uint32_t press;                  /* buttons pressed since the last frame (bit per B_*) */
     uint32_t held;                   /* buttons down */
+    uint32_t released;               /* buttons let go since the last frame */
 } ju_in_t;
 
 static const int16_t kCos[33] = {-181, -206, -226, -241, -251, -256, -255, -248, -237, -220, -198, -172, -142, -109, -74, -38, 0, 38, 74, 109, 142, 172, 198, 220, 237, 248, 255, 256, 251, 241, 226, 206, 181};
@@ -68,6 +71,7 @@ static const spage_t kPerfPages[] = {
     {"LFO MOD", K_RED, 5, {PG(G_MOD_RISE), PG(G_MOD_VCO), PG(G_MOD_VCOSW), PG(G_MOD_VCF), PG(G_MOD_VCFSW)}},
     {"MASTER", K_ORANGE, 4, {PG(G_VOLUME), PG(G_BAL_U), PG(G_BAL_L), PG(G_TUNE)}},
     {"MIDI", K_YELLOW, 2, {PG(G_CH_U), PG(G_CH_L)}},
+    {"SEQ CLOCK", K_ORANGE, 2, {PG(G_SYNC), PG(G_TEMPO)}},
 };
 #define NPANELPAGES ((int)(sizeof kPanelPages / sizeof kPanelPages[0]))
 #define NPERFPAGES ((int)(sizeof kPerfPages / sizeof kPerfPages[0]))
@@ -195,6 +199,9 @@ typedef struct {
     int turning_enc;
     uint8_t overview;
     uint8_t cpu;                        /* percent, for the header */
+    uint8_t seq_sub;                    /* the SEQ page: 0 the steps, 1 the setup */
+    uint8_t rec_used, panic_done;       /* REC was used as a modifier; PLAY held long enough for all notes off */
+    uint32_t play_down_at, seq_save_at, clear_at;
 } ui_t;
 static ui_t ui = {PAGE_QLINK, 0, {0, 0, 0, 0, 0}, {8, 0}, 0, 0, {0}, -1, 0, 0, 0, 0, {0}, 1, 0, 0};
 
@@ -209,6 +216,7 @@ static void ui_focus_on(int page, int id)
 
 static int cv_text_w_1(const char *x) { return cv_text_w(x, 1); }
 static void ju_store_current(void);                       /* ju_store.c */
+static int ju_store_seq(int part);
 static int ju_store_patch(int idx);
 
 static int ui_layer(void) { return ju_global[G_PANEL] & 1; }
@@ -473,6 +481,15 @@ static void ui_strcat(char *d, int n, const char *s)
 }
 static void ui_num(char *d, int n, int v) { char t[12]; fmt_int(t, v); ui_strcat(d, n, t); }
 
+static void seq_note_name(char *o, int n)                 /* "C#4" */
+{
+    static const char *const nm[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    o[0] = 0;
+    ui_strcat(o, 8, nm[n % 12]);
+    ui_num(o, 8, n / 12 - 1);
+}
+
+
 static void q_format(int di, char *out, int n)
 {
     const dial_t *d = &kQ[ui.qgroup].d[di];
@@ -511,6 +528,51 @@ static void ui_group_to(int g)                         /* the Q-Link page on a g
     ui.overview_at = ui.now;
 }
 
+/* ---- the sequencer page: KNOB 1 step, 2 note, 3 step type, 4 pattern (setup: 1 length, 2 gate, 3 tempo, 4 pattern) */
+static ju_pat_t *ui_pat(void) { return &ju_pat[ui_layer()][ju_seq_cur[ui_layer()] % JU_SEQ_PATS]; }
+static void ui_seq_clear(void)
+{
+    ju_pat_t *t = ui_pat();
+    int i;
+    for (i = 0; i < JU_SEQ_STEPS; i++) { t->type[i] = SQ_REST; t->note[i] = 60; }
+    ju_seq_cursor[ui_layer()] = 0;
+    ju_seq_dirty[ui_layer()] = 1;
+}
+static void ui_seq_input(const ju_in_t *in, uint32_t now)
+{
+    int p = ui_layer(), n;
+    ju_pat_t *t = ui_pat();
+    uint8_t *cur = &ju_seq_cursor[p];
+    ui.turning_enc = 1;
+    if (!t->len) t->len = 16;
+    if (*cur >= t->len) *cur = (uint8_t)(t->len - 1);
+    if (!ui.seq_sub) {
+        if (in->knob[0]) *cur = (uint8_t)(((int)*cur + in->knob[0] % t->len + t->len) % t->len);
+        if (in->knob[1]) {                                  /* the note; turning a rest makes it a note */
+            n = (int)t->note[*cur] + in->knob[1];
+            t->note[*cur] = (uint8_t)(n < 0 ? 0 : n > 127 ? 127 : n);
+            if (t->type[*cur] == SQ_REST) t->type[*cur] = SQ_NOTE;
+            ju_seq_dirty[p] = 1;
+        }
+        if (in->knob[2]) { t->type[*cur] = (uint8_t)(((int)t->type[*cur] + (in->knob[2] > 0 ? 1 : 2)) % 3); ju_seq_dirty[p] = 1; }
+        if (in->press & BTN(B_SCL)) { t->type[*cur] = SQ_REST; *cur = (uint8_t)((*cur + 1) % t->len); ju_seq_dirty[p] = 1; }
+    } else {
+        if (in->knob[0]) {
+            n = (int)t->len + in->knob[0] * ui_accel(0, now, 63);
+            t->len = (uint8_t)(n < 1 ? 1 : n > JU_SEQ_STEPS ? JU_SEQ_STEPS : n);
+            if (*cur >= t->len) *cur = (uint8_t)(t->len - 1);
+            ju_seq_dirty[p] = 1;
+        }
+        if (in->knob[1]) { n = (int)t->gate + in->knob[1]; t->gate = (uint8_t)(n < 1 ? 1 : n > 6 ? 6 : n); ju_seq_dirty[p] = 1; }
+        if (in->knob[2]) { ui.turning_enc = 2; ui_adjust(P_COUNT + G_TEMPO, in->knob[2], now); }
+    }
+    if (in->knob[3]) {                                      /* the pattern (both pages) */
+        ju_seq_cur[p] = (uint8_t)(((int)ju_seq_cur[p] + (in->knob[3] > 0 ? 1 : JU_SEQ_PATS - 1)) % JU_SEQ_PATS);
+        ju_seq_cursor[p] = 0;
+        ui.save_at = now + 2000u;                           /* the selection is saved with the settings */
+    }
+}
+
 /* one UI frame of input */
 static void ui_update(const ju_in_t *in, uint32_t now)
 {
@@ -524,11 +586,27 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     if (in->press & BTN(B_SAVE)) { ui.page = PAGE_PATCH; ui.write_mode = 0; }
     if (in->press & BTN(B_ENV)) ui_group_to(ui.page == PAGE_QLINK && ui.qgroup == 2 ? 3 : 2);
     if (in->press & BTN(B_LFO)) ui_group_to(5);
-    if (in->press & BTN(B_SEQ)) ui_group_to(4);
-    if (in->press & BTN(B_SCL)) ui_group_to(7);
+    if (in->press & BTN(B_SEQ)) { if (ui.page == PAGE_SEQ) ui.seq_sub ^= 1; else { ui.page = PAGE_SEQ; ui.seq_sub = 0; } ui.write_mode = 0; }
+    if ((in->press & BTN(B_SCL)) && ui.page != PAGE_SEQ) ui_group_to(7);          /* (on the SEQ page SCL clears a step) */
     if (in->press & BTN(B_ARP)) { ju_global[G_ARP_ON] ^= 1; ui.save_at = now + 2000u; }
-    if (in->press & BTN(B_PLAY)) ju_panic_req = 1;
-    if (ui.page == PAGE_PATCH) {
+    /* PLAY: a tap starts / stops the sequencer, held for 0.6 s it is all notes off */
+    if (in->press & BTN(B_PLAY)) { ui.play_down_at = now ? now : 1u; ui.panic_done = 0; }
+    if ((in->held & BTN(B_PLAY)) && ui.play_down_at && !ui.panic_done && now - ui.play_down_at >= 600u) {
+        ju_panic_req = 1; ju_seq_req = 2; ui.panic_done = 1;
+    }
+    if ((in->released & BTN(B_PLAY)) && ui.play_down_at) {
+        if (!ui.panic_done) ju_seq_req = ju_seq_run ? 2 : 1;
+        ui.play_down_at = 0;
+    }
+    /* REC: tapped, it arms recording; used with a knob (the dial restore) it does not */
+    if (in->press & BTN(B_REC)) ui.rec_used = 0;
+    if ((in->released & BTN(B_REC)) && !ui.rec_used) ju_seq_rec ^= 1;
+    if (ui.page == PAGE_SEQ && ui.seq_sub) {
+        if (in->press & BTN(B_OCTDN)) {                  /* OCT- twice within two seconds: the pattern is cleared */
+            if (ui.clear_at && now - ui.clear_at < 2000u) { ui_seq_clear(); ui.clear_at = 0; } else ui.clear_at = now ? now : 1u;
+        }
+        if (ui.clear_at && now - ui.clear_at >= 2000u) ui.clear_at = 0;
+    } else if (ui.page == PAGE_PATCH) {
         if (in->press & BTN(B_OCTUP)) ui_activate();
         if (in->press & BTN(B_OCTDN)) ui.write_mode = 0;
     } else {
@@ -545,9 +623,11 @@ static void ui_update(const ju_in_t *in, uint32_t now)
         for (i = 0; i < 4; i++) {
             if (!in->knob[i]) continue;
             ui.overview = 0;                           /* back to the dials; the move still counts */
-            if (in->held & BTN(B_REC)) q_restore(i, now);
+            if (in->held & BTN(B_REC)) { q_restore(i, now); ui.rec_used = 1; }
             else q_turn(i, in->knob[i], now);
         }
+    } else if (ui.page == PAGE_SEQ) {
+        ui_seq_input(in, now);
     } else {
         ui.turning_enc = 1;
         if (in->knob[0]) ui_move_focus(in->knob[0]);
@@ -562,6 +642,16 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     }
     if (ui.overview && now - ui.overview_at >= OVERVIEW_MS) ui.overview = 0;
 
+    if ((ju_seq_dirty[0] || ju_seq_dirty[1]) && !ui.seq_save_at) ui.seq_save_at = now + 2000u;
+    if (ui.seq_save_at && (int32_t)(now - ui.seq_save_at) > 0 && !ju_seq_run) {
+        int silent = 1, part;
+        for (i = 0; i < JU_NV; i++) silent = silent && ju_voice_level(i) == 0;
+        if (silent) {                                    /* a flash write stalls the audio: only when nothing sounds and it is not playing */
+            ui.seq_save_at = 0;
+            for (part = 0; part < 2; part++) if (ju_seq_dirty[part]) { ju_seq_dirty[part] = 0; (void)ju_store_seq(part); }
+            ju_store_current();
+        }
+    }
     /* a flash write stalls the audio for a moment: the globals save themselves only when nothing is sounding */
     if (ui.save_at && (int32_t)(now - ui.save_at) > 0) {
         int silent = 1;
@@ -597,7 +687,9 @@ static void d_header(void)
     ui_strcat(buf, sizeof buf, "CPU ");
     ui_num(buf, sizeof buf, ui.cpu);
     cv_text(174, 12, buf, ui.cpu > 85 ? K_RED : K_DIM, 1);
-    if (ju_global[G_ARP_ON]) cv_text(218, 12, "ARP", K_YELLOW, 1);
+    if (ju_seq_rec) cv_text(214, 12, "REC", K_RED, 1);
+    else if (ju_seq_run) cv_text(214, 12, "PLAY", K_FOCUS, 1);
+    else if (ju_global[G_ARP_ON]) cv_text(214, 12, "ARP", K_YELLOW, 1);
     cv_rect(0, 22, CV_W, 1, K_LINE);
 }
 
@@ -851,6 +943,27 @@ static void d_readout(void)
         cv_text(6, y + 30, "SAVED WITH THE PATCH", K_DIM, 1);
         return;
     }
+    if (ui.page == PAGE_SEQ) {
+        const ju_pat_t *t = &ju_pat[lay][ju_seq_cur[lay] % JU_SEQ_PATS];
+        int len = t->len ? t->len : 16, cur = ju_seq_cursor[lay] % len;
+        char b[24], v[12];
+        if (ui.seq_sub) {
+            cv_text(6, y + 5, ui.clear_at ? "PRESS OCT- AGAIN TO CLEAR THE PATTERN" : "THE FOUR KNOBS SET THE FOUR ROWS", ui.clear_at ? K_RED : K_DIM, 1);
+            cv_text(6, y + 18, "OCT- TWICE CLEARS THE PATTERN", K_DIM, 1);
+            cv_text(6, y + 30, "SEQ AGAIN: THE STEPS", K_DIM, 1);
+            return;
+        }
+        b[0] = 0;
+        ui_strcat(b, sizeof b, "STEP ");
+        ui_num(b, sizeof b, cur + 1);
+        cv_text(6, y + 5, b, K_DIM, 1);
+        if (t->type[cur] == SQ_NOTE) seq_note_name(v, t->note[cur]);
+        else { v[0] = 0; ui_strcat(v, sizeof v, t->type[cur] == SQ_TIE ? "TIE" : "REST"); }
+        cv_text(CV_W - cv_text_w(v, 2) - 6, y + 14, v, K_FOCUS, 2);
+        cv_text(6, y + 18, ju_seq_rec ? (ju_seq_run ? "REC: PLAY KEYS" : "REC: KEYS ENTER STEPS") : "REC ARMS RECORDING", ju_seq_rec ? K_RED : K_DIM, 1);
+        cv_text(6, y + 30, "KNOB 1 STEP 2 NOTE 3 TYPE 4 PATTERN", K_DIM, 1);
+        return;
+    }
     if (ui.page == PAGE_PATCH) {
         const ju_patch_t *p = &ju_patch[lay];
         cv_text(6, y + 6, p->name, K_TEXT, 2);
@@ -869,6 +982,70 @@ static void d_readout(void)
     cv_text(6, y + 30, "KNOB 1 MOVE  KNOB 2 VALUE  HOME DIALS", K_DIM, 1);
 }
 
+/* ---- the sequencer: the steps of a part's pattern, 16 at a time (4 x 4 at double size), and a setup page */
+static void d_seq(void)
+{
+    int p = ui_layer();
+    const ju_pat_t *t = &ju_pat[p][ju_seq_cur[p] % JU_SEQ_PATS];
+    int len = t->len ? t->len : 16, cur = ju_seq_cursor[p] % len, base = (cur / 16) * 16, i;
+    char b[24], b2[12];
+    uint16_t col = p ? K_BLUE : K_ORANGE;
+    cv_rect(0, 24, CV_W, 20, col);
+    b[0] = 0;
+    ui_strcat(b, sizeof b, ui.seq_sub ? "SETUP " : "SEQ ");
+    ui_strcat(b, sizeof b, p ? "L" : "U");
+    ui_strcat(b, sizeof b, " P");
+    if (ju_seq_cur[p] < 9) ui_strcat(b, sizeof b, "0");
+    ui_num(b, sizeof b, ju_seq_cur[p] + 1);
+    cv_text(6, 27, b, K_BG, 2);
+    if (!ui.seq_sub) {
+        b[0] = 0;
+        ui_num(b, sizeof b, base + 1); ui_strcat(b, sizeof b, "-"); ui_num(b, sizeof b, base + 16 > len ? len : base + 16);
+        ui_strcat(b, sizeof b, "/"); ui_num(b, sizeof b, len);
+        cv_text(CV_W - 6 - cv_text_w(b, 1), 31, b, K_BG, 1);
+    }
+    if (!cv_sees(46, 152)) return;
+    if (ui.seq_sub) {                                      /* the setup: LENGTH, GATE, TEMPO, PATTERN, one a knob */
+        static const char *const nm[4] = {"LENGTH", "GATE", "TEMPO", "PATTERN"};
+        for (i = 0; i < 4; i++) {
+            int y = 46 + i * 30;
+            b[0] = 0;
+            switch (i) {
+            case 0: ui_num(b, sizeof b, len); ui_strcat(b, sizeof b, " STEPS"); break;
+            case 1: ui_num(b, sizeof b, t->gate * 100 / 6); ui_strcat(b, sizeof b, " %"); break;
+            case 2: ui_num(b, sizeof b, 40 + ju_global[G_TEMPO]); ui_strcat(b, sizeof b, ju_global[G_SYNC] ? " MIDI" : " BPM"); break;
+            default: ui_num(b, sizeof b, ju_seq_cur[p] + 1); ui_strcat(b, sizeof b, " OF 16"); break;
+            }
+            cv_rect(0, y, CV_W, 29, K_PANEL);
+            cv_rect(0, y, 3, 29, col);
+            cv_text(8, y + 4, "KNOB", K_DIM, 1);
+            b2[0] = 0; ui_num(b2, sizeof b2, i + 1);
+            cv_text(8 + 30, y + 4, b2, K_DIM, 1);
+            cv_text(8, y + 13, nm[i], K_TEXT, 2);
+            cv_text(CV_W - 6 - cv_text_w(b, 2), y + 8, b, K_FOCUS, 2);
+        }
+        return;
+    }
+    for (i = 0; i < 16; i++) {                             /* the steps */
+        int idx = base + i, x = (i % 4) * 60, y = 46 + (i / 4) * 38;
+        int on = idx < len, isCur = on && idx == cur, playing = on && ju_seq_run && ju_seq_pos[p] == idx;
+        uint16_t ink = isCur ? K_FOCUS : K_TEXT;
+        cv_rect(x + 1, y + 1, 58, 36, isCur ? K_FOCBG : (on ? K_PANEL : K_BG));
+        if (playing) cv_frame(x + 1, y + 1, 58, 36, K_LEDON);
+        if (!on) continue;
+        b2[0] = 0; ui_num(b2, sizeof b2, idx + 1);
+        cv_text(x + 4, y + 4, b2, isCur ? K_FOCUS : K_DIM, 1);
+        if (t->type[idx] == SQ_NOTE) {
+            seq_note_name(b, t->note[idx]);
+            cv_text(x + (60 - cv_text_w(b, 2)) / 2, y + 16, b, ink, 2);
+        } else if (t->type[idx] == SQ_TIE) {
+            cv_text(x + (60 - cv_text_w("TIE", 2)) / 2, y + 16, "TIE", isCur ? K_FOCUS : K_YELLOW, 2);
+        } else {
+            cv_rect(x + 22, y + 22, 16, 2, isCur ? K_FOCUS : K_LINE);
+        }
+    }
+}
+
 static void ui_draw(void)
 {
     d_header();
@@ -877,6 +1054,7 @@ static void ui_draw(void)
     case PAGE_PANEL: d_panel(); break;
     case PAGE_PERF: d_perf(); break;
     case PAGE_FX: d_fx(); break;
+    case PAGE_SEQ: d_seq(); break;
     default: d_patches(); break;
     }
     d_readout();

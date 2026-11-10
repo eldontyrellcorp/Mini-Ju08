@@ -3,11 +3,15 @@
  * the patches in three objects of 23 (OBJ_PROJECT0..2), the current patches and the globals in OBJ_SETTINGS. */
 #define JU_PPO 23u                                   /* patches per object */
 #define JU_BANK_MAGIC 0x4A553031u                    /* "JU01" */
-#define JU_SET_MAGIC 0x4A555330u                     /* "JUS0" */
+#define JU_SET_MAGIC 0x4A555331u                     /* "JUS1" */
+#define JU_SEQ_MAGIC 0x4A535131u                     /* "JSQ1" */
 typedef struct { uint32_t magic; ju_patch_t p[JU_PPO]; } ju_bankobj_t;
-typedef struct { uint32_t magic; uint8_t cur[2]; uint8_t octave; uint8_t pad; uint8_t global[G_COUNT]; } ju_setobj_t;
+typedef struct { uint32_t magic; uint8_t cur[2]; uint8_t octave; uint8_t pad; uint8_t global[G_COUNT]; uint8_t seqcur[2]; } ju_setobj_t;
+typedef struct { uint32_t magic; ju_pat_t p[JU_SEQ_PATS]; } ju_seqobj_t;         /* one part's 16 patterns */
 _Static_assert(sizeof(ju_bankobj_t) <= ST_PAYLOAD_MAX, "a bank object fits a storage sector");
 _Static_assert(sizeof(ju_setobj_t) <= ST_PAYLOAD_MAX, "the settings object fits a storage sector");
+_Static_assert(sizeof(ju_seqobj_t) <= ST_PAYLOAD_MAX, "a part's patterns fit a storage sector");
+static ju_seqobj_t ju_seqbuf __attribute__((section(".pool")));
 static ju_bankobj_t ju_bankbuf __attribute__((section(".pool")));
 
 static int ju_store_patch(int idx)                   /* the object holding patch idx, from the RAM bank */
@@ -37,6 +41,7 @@ static void ju_store_current(void)
     so.cur[1] = (uint8_t)ui.patch_idx[1];
     so.octave = (uint8_t)(ju_octave + 3);
     memcpy(so.global, ju_global, G_COUNT);
+    so.seqcur[0] = ju_seq_cur[0]; so.seqcur[1] = ju_seq_cur[1];
     (void)st_save(OBJ_SETTINGS, &so, sizeof so);
 #endif
 }
@@ -63,6 +68,43 @@ static void ju_store_boot(void)
             if (so.cur[0] < 64) ui.patch_idx[0] = so.cur[0];
             if (so.cur[1] < 64) ui.patch_idx[1] = so.cur[1];
             if (so.octave <= 6) ju_octave = (int8_t)so.octave - 3;
+            if (so.seqcur[0] < JU_SEQ_PATS) ju_seq_cur[0] = so.seqcur[0];
+            if (so.seqcur[1] < JU_SEQ_PATS) ju_seq_cur[1] = so.seqcur[1];
+        }
+    }
+#endif
+}
+
+/* a part's 16 patterns (OBJ_UPRESET0 + part: 0xDC000 and 0xDE000, inside Felucca's store area) */
+static int ju_store_seq(int part)
+{
+#if FELUCCA_FLASH
+    if (!flash_ok || part < 0 || part > 1) return -1;
+    ju_seqbuf.magic = JU_SEQ_MAGIC;
+    memcpy(ju_seqbuf.p, ju_pat[part], sizeof ju_seqbuf.p);
+    return st_save(OBJ_UPRESET0 + (uint32_t)part, &ju_seqbuf, sizeof ju_seqbuf);
+#else
+    (void)part;
+    return -1;
+#endif
+}
+static void ju_store_seq_boot(void)
+{
+#if FELUCCA_FLASH
+    int part;
+    if (!flash_ok) return;
+    for (part = 0; part < 2; part++) {
+        int n = st_load(OBJ_UPRESET0 + (uint32_t)part, &ju_seqbuf, sizeof ju_seqbuf), k, i;
+        if (n != (int)sizeof ju_seqbuf || ju_seqbuf.magic != JU_SEQ_MAGIC) continue;
+        for (k = 0; k < JU_SEQ_PATS; k++) {                                   /* sanitised: a damaged pattern cannot break the engine */
+            ju_pat_t *t = &ju_pat[part][k];
+            *t = ju_seqbuf.p[k];
+            if (t->len < 1 || t->len > JU_SEQ_STEPS) t->len = 16;
+            if (t->gate < 1 || t->gate > 6) t->gate = 3;
+            for (i = 0; i < JU_SEQ_STEPS; i++) {
+                if (t->note[i] > 127) t->note[i] = 60;
+                if (t->type[i] > SQ_TIE) t->type[i] = SQ_REST;
+            }
         }
     }
 #endif

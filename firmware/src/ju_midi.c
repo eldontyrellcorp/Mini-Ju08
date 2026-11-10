@@ -72,7 +72,7 @@ static void ju_midi_drain(void)
         uint32_t at = mi_r % MQ, pkt = midi_in_q[at], status = (pkt >> 8) & 0xFFu;
         uint32_t d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
         mi_r++;
-        if (status >= 0xF8u) continue;                /* realtime: no clock in the synth */
+        if (status >= 0xF8u) { ju_seq_midi((uint8_t)status); continue; }     /* clock, start, continue, stop: the sequencer (MIDI clock selected) */
         ju_midi_event(status & 0xF0u, status & 0x0Fu, d1, d2);
     }
     if (midi_in_overflow) {                           /* a broken stream: release everything and start again */

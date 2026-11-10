@@ -8,6 +8,8 @@
 void ju_init(void); void ju_prepare_block(void); void ju_render(int32_t *, int32_t *); void ju_finish(const int32_t *, const int32_t *, int32_t *);
 void ju_note_on(uint8_t, uint8_t); void ju_note_off(uint8_t, uint8_t); void ju_bend(uint8_t, int); void ju_modwheel_set(uint8_t, uint8_t);
 void ju_sustain_set(uint8_t, uint8_t); void ju_all_off(uint8_t); int ju_voice_active(int);
+extern ju_pat_t ju_pat[2][JU_SEQ_PATS]; extern uint8_t ju_seq_cur[2]; extern volatile uint8_t ju_seq_run, ju_seq_rec, ju_seq_req;
+void ju_seq_midi(uint8_t); void ju_note_on_m(int, uint8_t); void ju_note_off_m(int, uint8_t);
 const char *ju_mfx_name(int); int ju_mfx_nparams(int); const ju_fxparam_t *ju_mfx_param(int, int); const ju_fxparam_t *ju_delay_param(int); const ju_fxparam_t *ju_reverb_param(int);
 void ju_fx_load_mfx_defaults(ju_fxpatch_t *, int);
 extern ju_patch_t ju_patch[2]; extern uint8_t ju_global[G_COUNT];
@@ -41,6 +43,19 @@ int main(int argc, char **argv)
             fx->mfxOn = (uint8_t)(rnd() % 4 != 0); fx->dlyOn = (uint8_t)(rnd() % 3 != 0); fx->revOn = (uint8_t)(rnd() % 3 != 0);
             ju_global[G_TEMPO] = (uint8_t)rnd();
         }
+        {   /* sequencer: random patterns of both parts, any clock */
+            int p, i;
+            for (p = 0; p < 2; p++) {
+                ju_seq_cur[p] = (uint8_t)(rnd() % JU_SEQ_PATS);
+                ju_pat_t *t = &ju_pat[p][ju_seq_cur[p]];
+                t->len = (uint8_t)(1 + rnd() % JU_SEQ_STEPS); t->gate = (uint8_t)(1 + rnd() % 6);
+                for (i = 0; i < JU_SEQ_STEPS; i++) { t->note[i] = (uint8_t)(rnd() % 128); t->type[i] = (uint8_t)(rnd() % 3); }
+            }
+            ju_global[G_SYNC] = (uint8_t)(rnd() & 1);
+            ju_global[G_TEMPO] = (uint8_t)rnd();
+            ju_seq_rec = (uint8_t)(rnd() % 3 == 0);
+            ju_seq_req = 1;
+        }
         ju_global[G_KEYMODE] = (uint8_t)(rnd() % 4);
         ju_global[G_VINTAGE] = (uint8_t)rnd();
         ju_global[G_PORTA_MODE] = (uint8_t)(rnd() % 3);
@@ -59,8 +74,15 @@ int main(int argc, char **argv)
                 int note = 12 + (int)(rnd() % 100), ch = (int)(rnd() % 2);
                 if (rnd() & 1) ju_note_on((uint8_t)ch, (uint8_t)note); else ju_note_off((uint8_t)ch, (uint8_t)note);
             }
+            if (b % 3 == 0) ju_seq_midi(0xF8);
+            if (b < 3600) {                                       /* the commands stop with the release: afterwards it must go quiet */
+                if (b % 701 == 0) ju_seq_midi((uint8_t)(0xFA + rnd() % 3));
+                if (b % 523 == 0) ju_seq_req = (uint8_t)(1 + rnd() % 2);
+                if (b % 411 == 0) ju_seq_rec = (uint8_t)(rnd() & 1);
+            } else if (b == 3600) ju_seq_rec = 0;
             if (b % 97 == 0) { ju_bend((uint8_t)(rnd() % 2), (int)(rnd() % 16384) - 8192); ju_modwheel_set((uint8_t)(rnd() % 2), (uint8_t)(rnd() % 128)); }
-            if (b == 3600) { ju_all_off(0xFF); ju_sustain_set(0xFF, 0); }
+            if (b == 3600) { ju_seq_req = 2; ju_all_off(0xFF); ju_sustain_set(0xFF, 0); }
+            if (b > 3600) ju_seq_req = ju_seq_req ? ju_seq_req : 0;
             ju_prepare_block(); ju_render(u, l); ju_finish(u, l, out);
             for (n = 0; n < 32; n++) {
                 int32_t a = out[2 * n] < 0 ? -out[2 * n] : out[2 * n];

@@ -31,6 +31,7 @@ static const char *const kPanel[] = {"UPPER", "LOWER"};
 static const char *const kArpMode[] = {"UP", "DOWN", "U&D", "RND"};
 static const char *const kArpRange[] = {"1", "2", "3", "4"};
 static const char *const kPorta[] = {"OFF", "ON", "UPR"};
+static const char *const kSync[] = {"INT", "MIDI"};
 #define SEL(arr) (uint8_t)(sizeof(arr) / sizeof(arr[0])), arr
 
 static const ju_pinfo_t kInfo[P_COUNT + G_COUNT] = {
@@ -103,6 +104,7 @@ static const ju_pinfo_t kInfo[P_COUNT + G_COUNT] = {
     {"BPM", "EFFECT TEMPO", 0, 0, 109},
     {"CH1", "PART 1 (UPPER) MIDI CH", SEL(kChan), 0},
     {"CH2", "PART 2 (LOWER) MIDI CH", SEL(kChan), 0},
+    {"SYN", "SEQUENCER CLOCK", SEL(kSync), 0},
 };
 
 const char *ju_pshort(int id) { return kInfo[id].shortName; }

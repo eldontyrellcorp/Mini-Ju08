@@ -15,7 +15,8 @@ the tracks, the old engines and the old screens with the Jupiter-8.
 | The whole chain on the 56 patches that use effects | 24-32 dB SNR, levels within 0.05 dB |
 | Parameter names, ranges, defaults and every displayed value | 39,000 values compared with the original (one differs: the original's float rounding) |
 | Panel logic (every button, knob and mode) and every screen | scripted tests and PNG renders of all pages (`host/out/ui/`) |
-| Overflow, instability, stuck voices | 800 random patches, notes, effects and controllers under UBSan |
+| The sequencer: tempo, rests, ties, gate, two lengths, transposition, MIDI clock, both recording modes | `host/ju_seq_test.c`, timing checked in milliseconds |
+| Overflow, instability, stuck voices | 500 random patches, notes, effects, controllers and sequences under UBSan |
 | The firmware builds, links and passes the project's image checks | `./build.sh` |
 
 **Not done:** running on hardware, listening tests, the CPU cost on the chip (see below), the web editor, comparison with a real Jupiter-8.
@@ -50,11 +51,12 @@ reverb (five types and shimmer) as in the ESP32 version. See `~/jupiter8_esp32/R
 | ALGORITHM | Upper / Lower part (the keys play the part being edited) |
 | MASTER | Volume |
 | HOME | Q-Link page; again: next group |
-| ENV / LFO / SEQ / SCL | Q-Link groups: ENV-1 and ENV-2 / LFO / VCO / PLAY |
+| ENV / LFO / SCL | Q-Link groups: ENV-1 and ENV-2 / LFO / PLAY (the VCO group: HOME or SELECT) |
 | EDIT / GLO / FX / SAVE | EDIT: the sound controls, one section per page (LFO, VCO MOD, VCO-1, VCO-2, MIX HPF VCA, VCF, VCF 2, ENV-1, ENV-2). GLO: the performance pages (assign, key mode, arpeggio, portamento, bender, LFO mod, master, MIDI). Press EDIT or GLO again for the next page. FX: effects. SAVE: patches |
 | ARP | Arpeggio on / off |
-| PLAY | All notes off |
-| REC held + a knob | That dial back to the saved patch's value |
+| SEQ | The sequencer; again: its setup |
+| PLAY | Start / stop the sequencer. Held 0.6 s: all notes off |
+| REC | Tapped: arm recording. (Held with a knob: that dial back to the saved value) |
 | OCT- / OCT+ | Octave of the keys. On the Patches page: back / load or write. Both together: octave 0 |
 | OCT- + OCT+ held 5 s | UBOOT (the update mode), as in Mini-Tone |
 
@@ -62,6 +64,25 @@ Q-Link groups: FILTER, FILTER 2, ENV-1, ENV-2, VCO, LFO, EFFECTS, PLAY, four dia
 that differs from the saved patch. On the Patches page: KNOB 1 moves by one, KNOB 2 by a row; OCT+ loads; select WRITE, OCT+,
 pick a slot, OCT+ to save (OCT- cancels). Writes pause the audio briefly; the global settings save themselves two seconds after
 the last change, once nothing sounds.
+
+### Sequencer
+
+One pattern for each part, so the two parts can play different sequences: up to 64 steps of a sixteenth note, one note per step, a
+rest or a **tie** (the note keeps sounding through the step). 16 patterns to choose from per part, saved in flash two seconds after
+a change (when it is stopped and nothing sounds). It plays through the part's voices, so the patch's assign mode and portamento apply.
+
+- **SEQ** opens the steps: four by four at double size, 16 at a time (a 64-step pattern is four windows that follow the cursor); the
+  step playing is outlined in red. KNOB 1 moves the cursor, KNOB 2 sets the note (turning a rest makes it a note), KNOB 3 the step type
+  (note, tie, rest), KNOB 4 the pattern. **SCL** clears the step and moves on. ALGORITHM chooses the part.
+- **SEQ again** opens the setup: KNOB 1 the length (1-64), KNOB 2 the gate (how long a note lasts in its step: 17 to 100 %), KNOB 3 the
+  tempo, KNOB 4 the pattern. OCT- twice clears the pattern.
+- **PLAY** starts and stops both parts together; a part whose pattern has no note is left to the keys.
+- **While it plays, a key transposes** the pattern (the key is the new root: C4 plays it as written) and does not sound.
+- **REC** arms recording of the part being edited. Stopped: each key you press sounds and is written to the cursor step, which moves
+  on (step entry). Playing: the keys sound and are written to the nearest step; a key held over steps ties them (real time).
+- **Tempo and clock:** the tempo is the global BPM (40-295, the same as the effects'). On the Performance page, SEQ CLOCK chooses
+  INT or MIDI: with MIDI, the sequencer follows the clock (24 pulses a quarter note) and Start, Continue and Stop from USB or TRS
+  MIDI, and PLAY only arms it.
 
 ### MIDI
 

@@ -28,6 +28,7 @@ enum {
     G_VINTAGE,
     G_TEMPO,
     G_CH_U, G_CH_L,     /* MIDI channel per part: 0 = OMNI, 1-16 */
+    G_SYNC,             /* sequencer clock: 0 internal, 1 MIDI clock */
     G_COUNT
 };
 
@@ -107,3 +108,15 @@ void ju_fx_format(const ju_fxparam_t *d, int v, char *out, int n);
 void ju_fx_load_mfx_defaults(ju_fxpatch_t *f, int type);
 void ju_fx_defaults(ju_fxpatch_t *f);
 int32_t ju_note_beats_q16(int idx);                 /* a note value (index 0-21: 64t .. 2 bars) in beats, Q16 */
+
+/* ---- the sequencer's patterns (the engine in ju_dsp.c, the panel and the flash store share the type) */
+#define JU_SEQ_STEPS 64
+#define JU_SEQ_PATS 16
+enum { SQ_REST, SQ_NOTE, SQ_TIE };
+typedef struct {
+    uint8_t note[JU_SEQ_STEPS];                      /* 0-127 */
+    uint8_t type[JU_SEQ_STEPS];                      /* SQ_REST, SQ_NOTE, SQ_TIE */
+    uint8_t len;                                     /* steps, 1-64 */
+    uint8_t gate;                                    /* ticks of a step's 6 a note lasts, 1-6 */
+    uint8_t pad[2];
+} ju_pat_t;

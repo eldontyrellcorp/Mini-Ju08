@@ -142,6 +142,7 @@ static void ju_leds(void)
     case PAGE_PERF: ju_led_put(nl, B_GLO); break;
     case PAGE_FX: ju_led_put(nl, B_FX); break;
     case PAGE_PATCH: ju_led_put(nl, B_SAVE); break;
+    case PAGE_SEQ: ju_led_put(nl, B_SEQ); break;
     default:
         ju_led_put(nl, B_HOME);
         if (ui.qgroup == 2 || ui.qgroup == 3) ju_led_put(nl, B_ENV);
@@ -151,6 +152,8 @@ static void ju_leds(void)
         break;
     }
     if (ju_global[G_ARP_ON]) ju_led_put(nl, B_ARP);
+    if (ju_seq_run) ju_led_put(nl, B_PLAY);
+    if (ju_seq_rec) ju_led_put(nl, B_REC);
     if (ui.page == PAGE_PATCH) { ju_led_put(nl, B_OCTUP); if (ui.write_mode) ju_led_put(nl, B_OCTDN); }
     else { if (ju_octave < 0) ju_led_put(nl, B_OCTDN); if (ju_octave > 0) ju_led_put(nl, B_OCTUP); }
     for (c = 0; c < FM1_NCOL; c++) fm1_led[c] = nl[c];
@@ -168,8 +171,10 @@ static void ju_gather(ju_in_t *in)
     in->algo = fm1_enc_take(EN_ALGO);
     in->preset = fm1_enc_take(EN_PRESET);
     in->press = in->held = 0;
+    in->released = 0;
     for (b = 0; b < NB; b++) {
         if ((pr >> PANEL_BTN[b]) & 1u) in->press |= BTN(b);
+        if ((released >> PANEL_BTN[b]) & 1u) in->released |= BTN(b);
         if ((fm1_in.buttons >> PANEL_BTN[b]) & 1u) in->held |= BTN(b);
     }
 }
@@ -192,6 +197,7 @@ static void fm1_main(void)
     ui.patch_idx[0] = 8;                                /* first start: part 1 on 21 (Jupiter Pad), part 2 on 11 (Deep Sub) */
     ui.patch_idx[1] = 0;
     ju_store_boot();
+    ju_store_seq_boot();
     ju_patch[0] = ju_bank[ui.patch_idx[0]];
     ju_patch[1] = ju_bank[ui.patch_idx[1]];
     memcpy(ui.saved_global, ju_global, G_COUNT);

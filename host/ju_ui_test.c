@@ -16,12 +16,15 @@ static int8_t ju_octave;
 static int stored_patch = -1, stored_cur;
 static void ju_store_current(void) { stored_cur++; }
 static int ju_store_patch(int idx) { stored_patch = idx; return 0; }
+static int stored_seq[2];
+static int ju_store_seq(int part) { stored_seq[part]++; return 0; }
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
 static uint32_t T = 1000;
 static void step(const ju_in_t *in) { T += 20; ui_update(in, T); }
 static ju_in_t press(int b) { ju_in_t i; memset(&i, 0, sizeof i); i.press = BTN(b); i.held = BTN(b); return i; }
+static ju_in_t release(int b) { ju_in_t i; memset(&i, 0, sizeof i); i.released = BTN(b); return i; }
 static ju_in_t turn(int k, int d) { ju_in_t i; memset(&i, 0, sizeof i); i.knob[k] = d; return i; }
 static void blocks(int n) { int i; for (i = 0; i < n; i++) { int32_t u[32] = {0}, l[32] = {0}; ju_prepare_block(); ju_render(u, l); } }
 
@@ -39,7 +42,6 @@ int main(void)
     in = press(B_ENV); step(&in);  CHECK(ui.page == PAGE_QLINK && ui.qgroup == 2);
     in = press(B_ENV); step(&in);  CHECK(ui.qgroup == 3);
     in = press(B_LFO); step(&in);  CHECK(ui.qgroup == 5);
-    in = press(B_SEQ); step(&in);  CHECK(ui.qgroup == 4);
     in = press(B_SCL); step(&in);  CHECK(ui.qgroup == 7);
     in = press(B_EDIT); step(&in); CHECK(ui.page == PAGE_PANEL);
     in = press(B_GLO); step(&in);  CHECK(ui.page == PAGE_PERF);
@@ -86,6 +88,52 @@ int main(void)
         in = turn(2, -1); step(&in); CHECK(ui.focus[PAGE_FX] == starts[np - 1]);          /* and round */
         ui.focus[PAGE_FX] = 0; in = turn(0, 6); step(&in); CHECK(ui.focus[PAGE_FX] == 6 && fx_page_of(starts, np, 6) == 1);   /* KNOB 1 crosses */
         ju_fx_load_mfx_defaults(&ju_patch[0].fx, MFX_CHO1);
+    }
+
+    /* the SEQ page: the steps, then the setup; the knobs edit the pattern of the part being edited */
+    {
+        ju_global[G_PANEL] = 0; ju_seq_cur[0] = 0; ju_pat[0][0].len = 8;
+        for (int i = 0; i < 64; i++) { ju_pat[0][0].type[i] = SQ_REST; ju_pat[0][0].note[i] = 60; }
+        in = press(B_SEQ); step(&in); CHECK(ui.page == PAGE_SEQ && ui.seq_sub == 0);
+        in = turn(0, 3); step(&in); CHECK(ju_seq_cursor[0] == 3);
+        in = turn(0, -5); step(&in); CHECK(ju_seq_cursor[0] == 6);                                      /* wraps within the length (8) */
+        ju_seq_cursor[0] = 2;
+        in = turn(1, 1); step(&in); CHECK(ju_pat[0][0].note[2] == 61 && ju_pat[0][0].type[2] == SQ_NOTE);    /* a note turns a rest into a note */
+        in = turn(1, -3); step(&in); CHECK(ju_pat[0][0].note[2] == 58);
+        in = turn(2, 1); step(&in); CHECK(ju_pat[0][0].type[2] == SQ_TIE);
+        in = turn(2, 1); step(&in); CHECK(ju_pat[0][0].type[2] == SQ_REST);
+        in = turn(2, -1); step(&in); CHECK(ju_pat[0][0].type[2] == SQ_TIE);
+        ju_pat[0][0].type[2] = SQ_NOTE;
+        in = press(B_SCL); step(&in); CHECK(ju_pat[0][0].type[2] == SQ_REST && ju_seq_cursor[0] == 3 && ui.page == PAGE_SEQ);    /* SCL: clear and move on */
+        CHECK(ju_seq_dirty[0]);
+        in = turn(3, 1); step(&in); CHECK(ju_seq_cur[0] == 1 && ju_seq_cursor[0] == 0);
+        in = turn(3, -1); step(&in); in = turn(3, -1); step(&in); CHECK(ju_seq_cur[0] == 15);          /* the patterns wrap */
+        ju_seq_cur[0] = 0;
+        in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 1);
+        in = turn(0, 4); step(&in); CHECK(ju_pat[0][0].len > 8);
+        ju_pat[0][0].len = 8;
+        in = turn(0, -100); step(&in); CHECK(ju_pat[0][0].len == 1);
+        in = turn(0, 200); step(&in); CHECK(ju_pat[0][0].len == 64);
+        ju_pat[0][0].gate = 3; in = turn(1, 5); step(&in); CHECK(ju_pat[0][0].gate == 6);
+        in = turn(1, -9); step(&in); CHECK(ju_pat[0][0].gate == 1);
+        { int t0 = ju_global[G_TEMPO]; in = turn(2, 1); step(&in); CHECK(ju_global[G_TEMPO] > t0); }
+        ju_pat[0][0].type[5] = SQ_NOTE;
+        in = press(B_OCTDN); step(&in); CHECK(ju_pat[0][0].type[5] == SQ_NOTE);                      /* once: asks */
+        in = press(B_OCTDN); step(&in); CHECK(ju_pat[0][0].type[5] == SQ_REST);                      /* twice: cleared */
+        in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 0);
+        /* the other part has its own pattern */
+        ju_global[G_PANEL] = 1; ju_seq_cursor[1] = 0; ju_pat[1][0].len = 16;
+        in = turn(1, 2); step(&in); CHECK(ju_pat[1][0].type[0] == SQ_NOTE && ju_pat[0][0].type[0] == SQ_REST);
+        ju_global[G_PANEL] = 0;
+        /* a changed pattern is saved two seconds on, when stopped and silent */
+        ju_seq_dirty[0] = 1; ju_seq_run = 0; stored_seq[0] = 0; ju_seq_dirty[1] = 0;
+        memset(&in, 0, sizeof in); T += 100; ui_update(&in, T); T += 2500; ui_update(&in, T);
+        CHECK(stored_seq[0] == 1 && !ju_seq_dirty[0]);
+        ju_seq_dirty[0] = 1; ju_seq_run = 1; stored_seq[0] = 0;
+        T += 100; ui_update(&in, T); T += 2500; ui_update(&in, T); T += 2500; ui_update(&in, T);
+        CHECK(stored_seq[0] == 0);                                                                       /* playing: not now */
+        ju_seq_run = 0; ju_seq_dirty[0] = 0;
+        in = press(B_HOME); step(&in);
     }
 
     /* SELECT steps the group, in both directions, and leaves any other page */
@@ -145,7 +193,24 @@ int main(void)
     /* ARP toggles; PLAY asks for all notes off */
     in = press(B_ARP); step(&in); CHECK(ju_global[G_ARP_ON] == 1);
     in = press(B_ARP); step(&in); CHECK(ju_global[G_ARP_ON] == 0);
-    ju_panic_req = 0; in = press(B_PLAY); step(&in); CHECK(ju_panic_req == 1);
+    /* PLAY: a tap starts and stops the sequencer; held 0.6 s it is all notes off */
+    ju_panic_req = 0; ju_seq_req = 0; ju_seq_run = 0;
+    in = press(B_PLAY); step(&in); in = release(B_PLAY); step(&in);
+    CHECK(ju_seq_req == 1 && ju_panic_req == 0);
+    ju_seq_req = 0; ju_seq_run = 1;
+    in = press(B_PLAY); step(&in); in = release(B_PLAY); step(&in);
+    CHECK(ju_seq_req == 2);
+    ju_seq_req = 0; ju_seq_run = 0;
+    in = press(B_PLAY); step(&in); T += 700; { ju_in_t h; memset(&h, 0, sizeof h); h.held = BTN(B_PLAY); step(&h); }
+    CHECK(ju_panic_req == 1 && ju_seq_req == 2);
+    in = release(B_PLAY); ju_seq_req = 0; step(&in); CHECK(ju_seq_req == 0);                                  /* let go after the long hold: no start */
+    /* REC: a tap arms recording; used with a knob (the dial restore) it does not */
+    ju_seq_rec = 0;
+    in = press(B_REC); step(&in); in = release(B_REC); step(&in); CHECK(ju_seq_rec == 1);
+    in = press(B_REC); step(&in); in = release(B_REC); step(&in); CHECK(ju_seq_rec == 0);
+    ui_group_to(0);
+    in = press(B_REC); step(&in); { ju_in_t h; memset(&h, 0, sizeof h); h.held = BTN(B_REC); h.knob[0] = 1; step(&h); }
+    in = release(B_REC); step(&in); CHECK(ju_seq_rec == 0);
 
     /* the globals save themselves after two seconds once nothing sounds */
     ju_global[G_VOLUME] = 150; ui.page = PAGE_PERF; ui.save_at = T + 100;

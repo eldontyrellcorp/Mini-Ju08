@@ -256,12 +256,15 @@ static void ju_refresh_layers(void)
 static void ju_arp_clear(void);
 static void ju_release_voice(ju_voice_t *v) { v->gate = 0; v->st1 = 3; v->st2 = 3; }
 
+static void ju_seq_release(int p);
+static void ju_seq_forget(void);
 static void ju_all_notes_off(void)
 {
     int i;
     for (i = 0; i < JU_NV; i++) { ju_v[i].gate = 0; ju_v[i].st1 = 3; ju_v[i].st2 = 3; }
     ju_nheld[0] = ju_nheld[1] = 0;
     ju_arp_clear();
+    ju_seq_forget();
 }
 
 static void ju_trigger(ju_voice_t *v, int note, int glide)
@@ -493,6 +496,161 @@ static void ju_arp_tick(void)
     }
 }
 
+/* ----------------------------------------------------------------- sequencer */
+/* One pattern per part (16 of them to choose from), up to 64 steps of a sixteenth note, one note per step, a rest or a tie
+ * (the note sounds on through the step). The clock runs at 24 ticks to a quarter note, from the tempo (G_TEMPO, 40 + value BPM)
+ * or from MIDI clock; a step is 6 ticks. The notes go through the part's voice assigner like key presses, so the patch's assign
+ * mode and portamento apply. While it plays, a key transposes the pattern (the key is the new root, C4 = as written), unless
+ * REC is armed: then the keys sound and are recorded. The pattern's gate is how many of a step's 6 ticks a note lasts. */
+ju_pat_t ju_pat[2][JU_SEQ_PATS] JU_POOL;
+uint8_t ju_seq_cur[2];                               /* the selected pattern of each part */
+volatile uint8_t ju_seq_run, ju_seq_rec, ju_seq_req; /* playing; REC armed; a request from the panel: 1 start, 2 stop */
+volatile uint8_t ju_seq_dirty[2];                    /* a pattern changed (the panel saves it) */
+uint8_t ju_seq_pos[2];                               /* the step playing */
+uint8_t ju_seq_cursor[2];                            /* the step the panel edits and step recording writes to */
+static int8_t ju_seq_trans[2];
+static int16_t ju_seq_snd[2] = {-1, -1};             /* the note the sequencer holds (after transposition), -1 none */
+static uint8_t ju_seq_gate_left[2];                  /* ticks until the note ends; 255: held on into a tie */
+static uint8_t ju_seq_tick6;                         /* tick within the step */
+static uint32_t ju_seq_acc;                          /* internal clock, samples x 256 */
+static volatile uint8_t ju_seq_ext_ticks;            /* MIDI clock pulses waiting */
+static int16_t ju_seq_rec_key[2] = {-1, -1};         /* the key being recorded (real time), -1 none */
+static int16_t ju_seq_rec_step[2] = {-1, -1};
+
+static void ju_seq_forget(void) { ju_seq_snd[0] = ju_seq_snd[1] = -1; }      /* every voice was released: nothing to release later */
+static ju_pat_t *ju_seq_pat(int p) { return &ju_pat[p][ju_seq_cur[p] % JU_SEQ_PATS]; }
+int ju_seq_active(int p)                             /* the part has a pattern with a note in it */
+{
+    const ju_pat_t *t = ju_seq_pat(p);
+    int i;
+    for (i = 0; i < t->len && i < JU_SEQ_STEPS; i++) if (t->type[i] == SQ_NOTE) return 1;
+    return 0;
+}
+void ju_seq_defaults(void)
+{
+    int p, k, i;
+    for (p = 0; p < 2; p++)
+        for (k = 0; k < JU_SEQ_PATS; k++) {
+            ju_pat_t *t = &ju_pat[p][k];
+            for (i = 0; i < JU_SEQ_STEPS; i++) { t->note[i] = 60; t->type[i] = SQ_REST; }
+            t->len = 16; t->gate = 3; t->pad[0] = t->pad[1] = 0;
+        }
+    for (p = 0; p < 2; p++) { ju_seq_cur[p] = 0; ju_seq_cursor[p] = 0; ju_seq_dirty[p] = 0; }
+}
+static void ju_seq_release(int p)
+{
+    if (ju_seq_snd[p] >= 0) ju_layer_key_up(p, ju_seq_snd[p]);
+    ju_seq_snd[p] = -1;
+    ju_seq_gate_left[p] = 0;
+}
+static void ju_seq_start(void)
+{
+    int p;
+    for (p = 0; p < 2; p++) {
+        const ju_pat_t *t = ju_seq_pat(p);
+        ju_seq_release(p);
+        ju_seq_pos[p] = (uint8_t)(t->len ? t->len - 1 : 0);          /* the first step to play is 0 */
+        ju_seq_rec_key[p] = ju_seq_rec_step[p] = -1;
+    }
+    ju_seq_tick6 = 0;
+    ju_seq_ext_ticks = 0;
+    ju_seq_acc = 0xFFFFFFFFu;                                         /* the first tick comes at once (internal clock) */
+    ju_seq_run = 1;
+}
+static void ju_seq_stop(void)
+{
+    int p;
+    ju_seq_run = 0;
+    for (p = 0; p < 2; p++) { ju_seq_release(p); ju_seq_rec_key[p] = ju_seq_rec_step[p] = -1; }
+}
+static void ju_seq_step(int p)
+{
+    ju_pat_t *t = ju_seq_pat(p);
+    int pos, type, nexttie, n, rp = ju_global[G_PANEL] & 1;
+    if (!t->len) return;
+    pos = (ju_seq_pos[p] + 1) % t->len;
+    ju_seq_pos[p] = (uint8_t)pos;
+    type = t->type[pos];
+    if (ju_seq_rec && p == rp && ju_seq_rec_key[p] >= 0) {            /* real-time recording: a key still down ties on; its own step is played live */
+        if (pos == ju_seq_rec_step[p]) type = SQ_TIE;
+        else { t->type[pos] = SQ_TIE; ju_seq_dirty[p] = 1; type = SQ_TIE; }
+        if (pos == ju_seq_rec_step[p]) type = -1;                     /* nothing for the sequencer to play */
+    }
+    if (type < 0) return;
+    nexttie = t->len > 1 && t->type[(pos + 1) % t->len] == SQ_TIE;
+    if (type == SQ_NOTE) {
+        if (ju_seq_snd[p] >= 0) ju_seq_release(p);
+        n = (int)t->note[pos] + ju_seq_trans[p];
+        n = n < 0 ? 0 : n > 127 ? 127 : n;
+        ju_layer_key_down(p, n);
+        ju_seq_snd[p] = (int16_t)n;
+        ju_seq_gate_left[p] = nexttie ? 255 : (uint8_t)(t->gate < 1 ? 1 : t->gate > 6 ? 6 : t->gate);
+    } else if (type == SQ_TIE) {
+        if (ju_seq_snd[p] >= 0) ju_seq_gate_left[p] = nexttie ? 255 : (uint8_t)(t->gate < 1 ? 1 : t->gate > 6 ? 6 : t->gate);
+    } else if (ju_seq_snd[p] >= 0) {
+        ju_seq_release(p);
+    }
+}
+static void ju_seq_tick(void)
+{
+    int p;
+    for (p = 0; p < 2; p++)
+        if (ju_seq_snd[p] >= 0 && ju_seq_gate_left[p] != 255 && ju_seq_gate_left[p] && --ju_seq_gate_left[p] == 0) ju_seq_release(p);
+    if (ju_seq_tick6 == 0) for (p = 0; p < 2; p++) ju_seq_step(p);
+    if (++ju_seq_tick6 >= 6) ju_seq_tick6 = 0;
+}
+static void ju_seq_block(void)                                       /* once per control block */
+{
+    if (ju_seq_req) {
+        uint8_t r = ju_seq_req;
+        ju_seq_req = 0;
+        if (r == 1) ju_seq_start(); else ju_seq_stop();
+    }
+    if (!ju_seq_run) return;
+    if (ju_global[G_SYNC]) {
+        while (ju_seq_ext_ticks) { ju_seq_ext_ticks--; ju_seq_tick(); }
+    } else {
+        uint32_t period = 28224000u / (uint32_t)(40 + ju_global[G_TEMPO]);       /* 44100 x 60 / (24 x bpm), x 256 */
+        if (ju_seq_acc == 0xFFFFFFFFu) ju_seq_acc = period;
+        else ju_seq_acc += JU_BLOCK * 256u;
+        while (ju_seq_acc >= period) { ju_seq_acc -= period; ju_seq_tick(); }
+    }
+}
+/* MIDI realtime (0xF8 clock, 0xFA start, 0xFB continue, 0xFC stop): only with the MIDI clock selected */
+void ju_seq_midi(uint8_t st)
+{
+    if (!ju_global[G_SYNC]) return;
+    if (st == 0xF8u) { if (ju_seq_run && ju_seq_ext_ticks < 8) ju_seq_ext_ticks++; }
+    else if (st == 0xFAu) ju_seq_start();
+    else if (st == 0xFBu) { ju_seq_run = 1; }
+    else if (st == 0xFCu) ju_seq_stop();
+}
+/* a note in: recorded (REC armed, on the part being edited), or a transposition (playing, an active pattern); else 0 */
+static int ju_seq_filter(int mask, int note, int on)
+{
+    int p, rp = ju_global[G_PANEL] & 1;
+    for (p = 0; p < 2; p++) {
+        ju_pat_t *t;
+        if (!(mask & (1 << p))) continue;
+        t = ju_seq_pat(p);
+        if (ju_seq_rec && p == rp && t->len) {                       /* the key sounds and is written */
+            if (on) {
+                int s;
+                if (!ju_seq_run) { s = ju_seq_cursor[p] % t->len; ju_seq_cursor[p] = (uint8_t)((s + 1) % t->len); }
+                else { s = ju_seq_pos[p]; if (ju_seq_tick6 >= 3) s = (s + 1) % t->len; ju_seq_rec_key[p] = (int16_t)note; ju_seq_rec_step[p] = (int16_t)s; }
+                t->note[s] = (uint8_t)note; t->type[s] = SQ_NOTE;
+                ju_seq_dirty[p] = 1;
+            } else if (ju_seq_rec_key[p] == note) ju_seq_rec_key[p] = -1;
+            continue;
+        }
+        if (ju_seq_run && ju_seq_active(p)) {                        /* the key is the new root and does not sound */
+            if (on) ju_seq_trans[p] = (int8_t)(note - 60);
+            mask &= ~(1 << p);
+        }
+    }
+    return mask;
+}
+
 /* which parts listen to a MIDI channel (0-15; 0xFF = not from MIDI): bit 0 = part 1 (Upper), bit 1 = part 2 */
 int ju_part_mask(uint8_t ch)
 {
@@ -507,6 +665,7 @@ int ju_part_mask(uint8_t ch)
 
 void ju_note_on_m(int mask, uint8_t note)
 {
+    mask = ju_seq_filter(mask, note, 1);
     if (!mask) return;
     if (ju_global[G_KEYMODE] != KM_2PART) {
         if (ju_arp_owns_key(note)) { ju_arp_add(note); return; }
@@ -525,6 +684,7 @@ void ju_note_on(uint8_t ch, uint8_t note) { ju_note_on_m(ju_part_mask(ch), note)
 
 void ju_note_off_m(int mask, uint8_t note)
 {
+    mask = ju_seq_filter(mask, note, 0);
     if (!mask) return;
     if (ju_global[G_KEYMODE] != KM_2PART) {
         if (ju_arp_owns_key(note)) { ju_arp_remove(note); return; }
@@ -649,6 +809,12 @@ void ju_init(void)
     ju_refresh_layers();
     ju_fx_init();
     ju_fx_tail = 0;
+    ju_seq_defaults();
+    ju_seq_run = ju_seq_rec = ju_seq_req = 0;
+    ju_seq_snd[0] = ju_seq_snd[1] = -1;
+    ju_seq_rec_key[0] = ju_seq_rec_key[1] = ju_seq_rec_step[0] = ju_seq_rec_step[1] = -1;
+    ju_seq_trans[0] = ju_seq_trans[1] = 0;
+    ju_seq_tick6 = 0;
 }
 
 /* ------------------------------------------------------------- per block */
@@ -742,6 +908,7 @@ void ju_prepare_block(void)
         }
     }
     ju_arp_tick();
+    ju_seq_block();
     ju_update_layer(0);
     ju_update_layer(1);
     ju_fx_control(&ju_patch[0].fx, 40 + ju_global[G_TEMPO]);

@@ -13,3 +13,10 @@ void ju_note_on(uint8_t, uint8_t); void ju_note_off(uint8_t, uint8_t); void ju_n
 int32_t ju_voice_level(int); int ju_part_mask(uint8_t);
 const char *ju_pshort(int); const char *ju_plong(int); int ju_psteps(int); const char *ju_plabel(int, int);
 int ju_cc_to_param(uint8_t); void ju_format_param(int, uint8_t, char *, int);
+
+/* sequencer */
+extern ju_pat_t ju_pat[2][JU_SEQ_PATS];
+extern uint8_t ju_seq_cur[2], ju_seq_pos[2], ju_seq_cursor[2];
+extern volatile uint8_t ju_seq_run, ju_seq_rec, ju_seq_req, ju_seq_dirty[2];
+int ju_seq_active(int); void ju_seq_defaults(void); void ju_seq_midi(uint8_t);
+int ju_voice_gate(int); int ju_voice_note(int); void ju_all_off(uint8_t);
