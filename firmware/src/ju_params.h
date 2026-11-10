@@ -29,6 +29,9 @@ enum {
     G_TEMPO,
     G_CH_U, G_CH_L,     /* MIDI channel per part: 0 = OMNI, 1-16 */
     G_SYNC,             /* sequencer clock: 0 internal, 1 MIDI clock */
+    G_METRO,            /* metronome: 0 off, 1 while recording, 2 whenever the sequencer plays */
+    G_COUNTIN,          /* beats of count-in before a recording starts: 0 = none */
+    G_CLICKVOL,         /* the click's level */
     G_COUNT
 };
 

@@ -20,3 +20,6 @@ extern uint8_t ju_seq_cur[2], ju_seq_pos[2], ju_seq_cursor[2];
 extern volatile uint8_t ju_seq_run, ju_seq_rec, ju_seq_req, ju_seq_dirty[2];
 int ju_seq_active(int); void ju_seq_defaults(void); void ju_seq_midi(uint8_t);
 int ju_voice_gate(int); int ju_voice_note(int); void ju_all_off(uint8_t);
+extern volatile uint32_t ju_click_count; extern uint8_t ju_click_accent; extern volatile uint8_t ju_seq_op, ju_seq_op_part, ju_seq_op_step;
+void ju_click_render(int32_t *, uint32_t); int ju_seq_count_beats_left(void); int ju_seq_undo_count(void);
+void ju_click_trig(int);

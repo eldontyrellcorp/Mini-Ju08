@@ -42,6 +42,7 @@ static void audio_block(int32_t *out, uint32_t n)
 #if FELUCCA_UAC
     uac_tap(out, n);                                    /* the USB audio input: the master output */
 #endif
+    ju_click_render(out, n);                            /* the metronome: the headphones and speaker only, never the USB audio */
     for (i = 0; i < n; i++) {
         out[2u * i] *= 1 << OUT_SHIFT;
         out[2u * i + 1u] *= 1 << OUT_SHIFT;

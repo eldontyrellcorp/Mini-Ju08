@@ -543,7 +543,85 @@ static void ju_seq_release(int p)
     ju_seq_snd[p] = -1;
     ju_seq_gate_left[p] = 0;
 }
-static void ju_seq_start(void)
+/* ---- the metronome's click: a short decaying sine, higher on the first beat of a bar. It is mixed after the USB tap, so it is heard in
+ * the headphones and speaker and never in the USB audio. */
+static struct { int32_t pos, len; uint32_t ph, inc; } ju_click = {1, 0, 0, 0};
+volatile uint32_t ju_click_count;                       /* clicks triggered (the host tests count them) */
+uint8_t ju_click_accent;                                /* the last one was a first beat */
+void ju_click_trig(int accent)
+{
+    ju_click.pos = 0;
+    ju_click.len = 1100;                                /* 25 ms */
+    ju_click.ph = 0;
+    ju_click.inc = accent ? (uint32_t)(1500.0 * 4294967296.0 / 44100.0) : (uint32_t)(1000.0 * 4294967296.0 / 44100.0);
+    ju_click_accent = (uint8_t)(accent != 0);
+    ju_click_count++;
+}
+void ju_click_render(int32_t *out, uint32_t n)          /* interleaved stereo, Q15 */
+{
+    uint32_t i;
+    if (ju_click.pos >= ju_click.len) return;
+    for (i = 0; i < n && ju_click.pos < ju_click.len; i++, ju_click.pos++) {
+        int32_t env = ((ju_click.len - ju_click.pos) * 65536) / ju_click.len;                      /* 1 -> 0, Q16 (a 32-bit divide) */
+        int32_t v = ju_mulq(ju_mulq(ju_sine_turn(ju_click.ph) >> 9, env, 16), (int32_t)ju_global[G_CLICKVOL] * 128, 15);
+        int32_t l = out[2 * i] + v, r = out[2 * i + 1] + v;
+        out[2 * i] = l > 32767 ? 32767 : l < -32767 ? -32767 : l;
+        out[2 * i + 1] = r > 32767 ? 32767 : r < -32767 ? -32767 : r;
+        ju_click.ph += ju_click.inc;
+    }
+}
+
+/* ---- undo: the last JU_UNDO_N pattern changes of recording (a note written, a tie added) and of erasing steps, one step at a time.
+ * An entry remembers what the step was; entries pushed together (an erase of a step and its ties) are undone together. */
+#define JU_UNDO_N 32
+typedef struct { uint8_t part, pat, step, note, type, grp; } ju_undo_t;
+static ju_undo_t ju_undo[JU_UNDO_N];
+static uint8_t ju_undo_head, ju_undo_cnt;
+static void ju_undo_push(int part, int step, int grp)    /* before the step changes */
+{
+    const ju_pat_t *t = &ju_pat[part][ju_seq_cur[part] % JU_SEQ_PATS];
+    ju_undo_t *u = &ju_undo[ju_undo_head];
+    u->part = (uint8_t)part; u->pat = (uint8_t)(ju_seq_cur[part] % JU_SEQ_PATS); u->step = (uint8_t)step;
+    u->note = t->note[step]; u->type = t->type[step]; u->grp = (uint8_t)grp;
+    ju_undo_head = (uint8_t)((ju_undo_head + 1) % JU_UNDO_N);
+    if (ju_undo_cnt < JU_UNDO_N) ju_undo_cnt++;
+}
+int ju_seq_undo_count(void) { return ju_undo_cnt; }
+static void ju_seq_undo(void)                            /* the last change, with the ones that went with it */
+{
+    int more = 1;
+    while (more && ju_undo_cnt) {
+        ju_undo_head = (uint8_t)((ju_undo_head + JU_UNDO_N - 1) % JU_UNDO_N);
+        {
+            const ju_undo_t *u = &ju_undo[ju_undo_head];
+            ju_pat_t *t = &ju_pat[u->part][u->pat];
+            t->note[u->step] = u->note; t->type[u->step] = u->type;
+            ju_seq_dirty[u->part] = 1;
+            ju_seq_cursor[u->part] = u->step;
+            more = u->grp;
+        }
+        ju_undo_cnt--;
+    }
+}
+static void ju_seq_erase(int part, int step)             /* the step and the ties that hang on it become rests */
+{
+    ju_pat_t *t = &ju_pat[part][ju_seq_cur[part] % JU_SEQ_PATS];
+    int k = step, first = 1;
+    if (step < 0 || step >= t->len) return;
+    do {
+        if (t->type[k] != SQ_REST) { ju_undo_push(part, k, !first); first = 0; t->type[k] = SQ_REST; }
+        k++;
+    } while (k < t->len && t->type[k] == SQ_TIE);
+    ju_seq_dirty[part] = 1;
+}
+/* a request from the panel (handled at the next block, in the audio's context, where the undo history is kept) */
+volatile uint8_t ju_seq_op, ju_seq_op_part, ju_seq_op_step;      /* ju_seq_op: 1 undo, 2 erase a step (set it last) */
+
+static uint32_t ju_seq_cnt, ju_seq_cnt_total;            /* count-in: pulses left, and in all */
+static uint32_t ju_seq_pp;                               /* pulses since the start */
+int ju_seq_count_beats_left(void) { return (int)((ju_seq_cnt + 23u) / 24u); }
+
+static void ju_seq_start_state(void)
 {
     int p;
     for (p = 0; p < 2; p++) {
@@ -553,14 +631,27 @@ static void ju_seq_start(void)
         ju_seq_rec_key[p] = ju_seq_rec_step[p] = -1;
     }
     ju_seq_tick6 = 0;
+    ju_seq_pp = 0;
+    ju_seq_run = 1;
+}
+static void ju_seq_start(void)
+{
+    ju_seq_cnt = 0;
     ju_seq_ext_ticks = 0;
     ju_seq_acc = 0xFFFFFFFFu;                                         /* the first tick comes at once (internal clock) */
-    ju_seq_run = 1;
+    ju_seq_start_state();
+}
+static void ju_seq_countin(void)                                      /* PLAY with REC armed: the metronome counts, then it starts */
+{
+    ju_seq_cnt_total = ju_seq_cnt = (uint32_t)ju_global[G_COUNTIN] * 24u;
+    ju_seq_ext_ticks = 0;
+    ju_seq_acc = 0xFFFFFFFFu;
 }
 static void ju_seq_stop(void)
 {
     int p;
     ju_seq_run = 0;
+    ju_seq_cnt = 0;
     for (p = 0; p < 2; p++) { ju_seq_release(p); ju_seq_rec_key[p] = ju_seq_rec_step[p] = -1; }
 }
 static void ju_seq_step(int p)
@@ -572,9 +663,8 @@ static void ju_seq_step(int p)
     ju_seq_pos[p] = (uint8_t)pos;
     type = t->type[pos];
     if (ju_seq_rec && p == rp && ju_seq_rec_key[p] >= 0) {            /* real-time recording: a key still down ties on; its own step is played live */
-        if (pos == ju_seq_rec_step[p]) type = SQ_TIE;
-        else { t->type[pos] = SQ_TIE; ju_seq_dirty[p] = 1; type = SQ_TIE; }
         if (pos == ju_seq_rec_step[p]) type = -1;                     /* nothing for the sequencer to play */
+        else { if (t->type[pos] != SQ_TIE) ju_undo_push(p, pos, 0); t->type[pos] = SQ_TIE; ju_seq_dirty[p] = 1; type = SQ_TIE; }
     }
     if (type < 0) return;
     nexttie = t->len > 1 && t->type[(pos + 1) % t->len] == SQ_TIE;
@@ -599,31 +689,51 @@ static void ju_seq_tick(void)
     if (ju_seq_tick6 == 0) for (p = 0; p < 2; p++) ju_seq_step(p);
     if (++ju_seq_tick6 >= 6) ju_seq_tick6 = 0;
 }
+/* one clock pulse (24 to a quarter note): the count-in, or a tick of the sequencer, with the metronome's click on the beat */
+static void ju_seq_pulse(void)
+{
+    if (ju_seq_cnt) {
+        uint32_t done = ju_seq_cnt_total - ju_seq_cnt;
+        if (done % 24u == 0) ju_click_trig((done / 24u) % 4u == 0);
+        if (--ju_seq_cnt == 0) ju_seq_start_state();                  /* the next pulse is step 0, on the beat */
+        return;
+    }
+    if (ju_global[G_METRO] == 2 || (ju_global[G_METRO] == 1 && ju_seq_rec))
+        if (ju_seq_pp % 24u == 0) ju_click_trig((ju_seq_pp / 24u) % 4u == 0);
+    ju_seq_pp++;
+    ju_seq_tick();
+}
 static void ju_seq_block(void)                                       /* once per control block */
 {
     if (ju_seq_req) {
         uint8_t r = ju_seq_req;
         ju_seq_req = 0;
-        if (r == 1) ju_seq_start(); else ju_seq_stop();
+        if (r == 1) { if (ju_seq_rec && ju_global[G_COUNTIN] && !ju_seq_run && !ju_seq_cnt) ju_seq_countin(); else ju_seq_start(); }
+        else ju_seq_stop();
     }
-    if (!ju_seq_run) return;
+    if (ju_seq_op) {
+        uint8_t o = ju_seq_op;
+        ju_seq_op = 0;
+        if (o == 1) ju_seq_undo(); else if (o == 2) ju_seq_erase(ju_seq_op_part & 1, ju_seq_op_step);
+    }
+    if (!ju_seq_run && !ju_seq_cnt) return;
     if (ju_global[G_SYNC]) {
-        while (ju_seq_ext_ticks) { ju_seq_ext_ticks--; ju_seq_tick(); }
+        while (ju_seq_ext_ticks) { ju_seq_ext_ticks--; ju_seq_pulse(); }
     } else {
         uint32_t period = 28224000u / (uint32_t)(40 + ju_global[G_TEMPO]);       /* 44100 x 60 / (24 x bpm), x 256 */
         if (ju_seq_acc == 0xFFFFFFFFu) ju_seq_acc = period;
         else ju_seq_acc += JU_BLOCK * 256u;
-        while (ju_seq_acc >= period) { ju_seq_acc -= period; ju_seq_tick(); }
+        while (ju_seq_acc >= period) { ju_seq_acc -= period; ju_seq_pulse(); }
     }
 }
 /* MIDI realtime (0xF8 clock, 0xFA start, 0xFB continue, 0xFC stop): only with the MIDI clock selected */
 void ju_seq_midi(uint8_t st)
 {
     if (!ju_global[G_SYNC]) return;
-    if (st == 0xF8u) { if (ju_seq_run && ju_seq_ext_ticks < 8) ju_seq_ext_ticks++; }
+    if (st == 0xF8u) { if ((ju_seq_run || ju_seq_cnt) && ju_seq_ext_ticks < 8) ju_seq_ext_ticks++; }
     else if (st == 0xFAu) ju_seq_start();
     else if (st == 0xFBu) { ju_seq_run = 1; }
-    else if (st == 0xFCu) ju_seq_stop();
+    else if (st == 0xFCu) { ju_seq_stop(); }
 }
 /* a note in: recorded (REC armed, on the part being edited), or a transposition (playing, an active pattern); else 0 */
 static int ju_seq_filter(int mask, int note, int on)
@@ -633,11 +743,12 @@ static int ju_seq_filter(int mask, int note, int on)
         ju_pat_t *t;
         if (!(mask & (1 << p))) continue;
         t = ju_seq_pat(p);
-        if (ju_seq_rec && p == rp && t->len) {                       /* the key sounds and is written */
+        if (ju_seq_rec && p == rp && t->len && !ju_seq_cnt) {        /* the key sounds and is written */
             if (on) {
                 int s;
                 if (!ju_seq_run) { s = ju_seq_cursor[p] % t->len; ju_seq_cursor[p] = (uint8_t)((s + 1) % t->len); }
                 else { s = ju_seq_pos[p]; if (ju_seq_tick6 >= 3) s = (s + 1) % t->len; ju_seq_rec_key[p] = (int16_t)note; ju_seq_rec_step[p] = (int16_t)s; }
+                ju_undo_push(p, s, 0);
                 t->note[s] = (uint8_t)note; t->type[s] = SQ_NOTE;
                 ju_seq_dirty[p] = 1;
             } else if (ju_seq_rec_key[p] == note) ju_seq_rec_key[p] = -1;
@@ -766,6 +877,7 @@ void ju_global_defaults(uint8_t *g)
     g[G_MOD_VCO] = 70; g[G_MOD_VCOSW] = 1; g[G_MOD_VCF] = 0;
     g[G_VINTAGE] = 128;
     g[G_TEMPO] = 80;
+    g[G_CLICKVOL] = 170;
 }
 
 #define JU_C(x) ((int32_t)((x) * 65536.0))
@@ -815,6 +927,11 @@ void ju_init(void)
     ju_seq_rec_key[0] = ju_seq_rec_key[1] = ju_seq_rec_step[0] = ju_seq_rec_step[1] = -1;
     ju_seq_trans[0] = ju_seq_trans[1] = 0;
     ju_seq_tick6 = 0;
+    ju_seq_cnt = ju_seq_cnt_total = ju_seq_pp = 0;
+    ju_seq_op = 0;
+    ju_undo_head = ju_undo_cnt = 0;
+    ju_click.pos = ju_click.len = 0;
+    ju_click_count = 0;
 }
 
 /* ------------------------------------------------------------- per block */

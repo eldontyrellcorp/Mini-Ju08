@@ -152,7 +152,7 @@ static void ju_leds(void)
         break;
     }
     if (ju_global[G_ARP_ON]) ju_led_put(nl, B_ARP);
-    if (ju_seq_run) ju_led_put(nl, B_PLAY);
+    if (ju_seq_run || ju_seq_count_beats_left()) ju_led_put(nl, B_PLAY);
     if (ju_seq_rec) ju_led_put(nl, B_REC);
     if (ui.page == PAGE_PATCH) { ju_led_put(nl, B_OCTUP); if (ui.write_mode) ju_led_put(nl, B_OCTDN); }
     else { if (ju_octave < 0) ju_led_put(nl, B_OCTDN); if (ju_octave > 0) ju_led_put(nl, B_OCTUP); }

@@ -88,6 +88,8 @@ int main(int argc, char **argv)
         ju_seq_rec = 0; ui.seq_sub = 1; ju_pat[0][0].len = 16; snprintf(path, sizeof path, "%s/seq3.ppm", dir); frame(path, 5000);
         ui.seq_sub = 0; ui.page = PAGE_QLINK;
     }
+    ui.page = PAGE_PERF; ui.focus[PAGE_PERF] = sp_first(PAGE_PERF, NPERFPAGES - 1); ju_global[G_COUNTIN] = 4; ju_global[G_METRO] = 2;
+    snprintf(path, sizeof path, "%s/metro.ppm", dir); frame(path, 5000);
     ui.page = PAGE_PATCH; ui.focus[PAGE_PATCH] = 25; snprintf(path, sizeof path, "%s/patch.ppm", dir); frame(path, 5000);
     ui.write_mode = 1; ui.focus[PAGE_PATCH] = 64; snprintf(path, sizeof path, "%s/patchw.ppm", dir); frame(path, 5000);
     printf("frames written to %s\n", dir);

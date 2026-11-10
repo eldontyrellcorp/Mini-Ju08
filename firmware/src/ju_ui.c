@@ -72,6 +72,7 @@ static const spage_t kPerfPages[] = {
     {"MASTER", K_ORANGE, 4, {PG(G_VOLUME), PG(G_BAL_U), PG(G_BAL_L), PG(G_TUNE)}},
     {"MIDI", K_YELLOW, 2, {PG(G_CH_U), PG(G_CH_L)}},
     {"SEQ CLOCK", K_ORANGE, 2, {PG(G_SYNC), PG(G_TEMPO)}},
+    {"METRONOME", K_YELLOW, 3, {PG(G_METRO), PG(G_COUNTIN), PG(G_CLICKVOL)}},
 };
 #define NPANELPAGES ((int)(sizeof kPanelPages / sizeof kPanelPages[0]))
 #define NPERFPAGES ((int)(sizeof kPerfPages / sizeof kPerfPages[0]))
@@ -597,7 +598,7 @@ static void ui_seq_input(const ju_in_t *in, uint32_t now)
                 ju_seq_dirty[p] = 1;
             }
         }
-        if (in->press & BTN(B_SCL)) { if (h >= 0) { seq_set_len(t, h, 0); ju_seq_dirty[p] = 1; } }     /* delete the note */
+        if (in->press & BTN(B_SCL)) { ju_seq_op_part = (uint8_t)p; ju_seq_op_step = *cur; ju_seq_op = 2; }   /* erase this step and the ties on it (undoable) */
     } else {
         if (in->knob[0]) {
             n = (int)t->len + in->knob[0] * ui_accel(0, now, 63);
@@ -623,7 +624,10 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     ui.now = now;
 
     if (in->press & BTN(B_HOME)) { if (ui.page == PAGE_QLINK) ui_group_to(ui.qgroup + 1); else { ui.page = PAGE_QLINK; ui.write_mode = 0; } }
-    if (in->press & BTN(B_EDIT)) { if (ui.page == PAGE_PANEL) ui_jump_section(1); ui.page = PAGE_PANEL; ui.write_mode = 0; }
+    if (in->press & BTN(B_EDIT)) {
+        if (ui.page == PAGE_SEQ && !ui.seq_sub) ju_seq_op = 1;                              /* the sequencer's undo: the last recorded change */
+        else { if (ui.page == PAGE_PANEL) ui_jump_section(1); ui.page = PAGE_PANEL; ui.write_mode = 0; }
+    }
     if (in->press & BTN(B_GLO)) { if (ui.page == PAGE_PERF) ui_jump_section(1); ui.page = PAGE_PERF; ui.write_mode = 0; }
     if (in->press & BTN(B_FX)) { if (ui.page == PAGE_FX) ui_jump_section(1); ui.page = PAGE_FX; ui.write_mode = 0; }
     if (in->press & BTN(B_SAVE)) { ui.page = PAGE_PATCH; ui.write_mode = 0; }
@@ -731,7 +735,8 @@ static void d_header(void)
     ui_strcat(buf, sizeof buf, "CPU ");
     ui_num(buf, sizeof buf, ui.cpu);
     cv_text(174, 12, buf, ui.cpu > 85 ? K_RED : K_DIM, 1);
-    if (ju_seq_rec) cv_text(214, 12, "REC", K_RED, 1);
+    if (ju_seq_count_beats_left()) { char cb[8]; cb[0] = 0; ui_strcat(cb, sizeof cb, "IN "); ui_num(cb, sizeof cb, ju_seq_count_beats_left()); cv_text(214, 12, cb, K_RED, 1); }
+    else if (ju_seq_rec) cv_text(214, 12, "REC", K_RED, 1);
     else if (ju_seq_run) cv_text(214, 12, "PLAY", K_FOCUS, 1);
     else if (ju_global[G_ARP_ON]) cv_text(214, 12, "ARP", K_YELLOW, 1);
     cv_rect(0, 22, CV_W, 1, K_LINE);
@@ -994,9 +999,14 @@ static void d_readout(void)
             cv_text(6, y + 30, "SEQ AGAIN: THE ROLL", K_DIM, 1);
             return;
         }
-        cv_text(6, y + 6, ju_seq_rec ? (ju_seq_run ? "REC: PLAY THE KEYS, THEY ARE WRITTEN" : "REC: EACH KEY WRITES THE STEP") : "REC ARMS RECORDING", ju_seq_rec ? K_RED : K_DIM, 1);
-        cv_text(6, y + 18, "1 STEP  2 PITCH  3 LENGTH  4 PATTERN", K_DIM, 1);
-        cv_text(6, y + 30, "SCL DELETES  SEQ AGAIN: SETUP", K_DIM, 1);
+        {
+            char u[40];
+            cv_text(6, y + 6, ju_seq_count_beats_left() ? "COUNTING IN: GET READY" : ju_seq_rec ? (ju_seq_run ? "REC: PLAY THE KEYS, THEY ARE WRITTEN" : (ju_global[G_COUNTIN] ? "REC: PLAY STARTS AFTER THE COUNT-IN" : "REC: EACH KEY WRITES THE STEP")) : "REC ARMS RECORDING",
+                    ju_seq_rec ? K_RED : K_DIM, 1);
+            cv_text(6, y + 18, "1 STEP  2 PITCH  3 LENGTH  4 PATTERN", K_DIM, 1);
+            u[0] = 0; ui_strcat(u, sizeof u, "EDIT UNDO ("); ui_num(u, sizeof u, ju_seq_undo_count()); ui_strcat(u, sizeof u, ")  SCL ERASE  SEQ SETUP");
+            cv_text(6, y + 30, u, K_DIM, 1);
+        }
         return;
     }
     if (ui.page == PAGE_PATCH) {

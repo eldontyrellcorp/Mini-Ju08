@@ -79,6 +79,14 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
   next note; 0 deletes it), KNOB 4 the pattern. **SCL** deletes the note under the cursor.
 - **SEQ again** opens the setup: four large values, KNOB 1 the length of the pattern (1-64), KNOB 2 the gate (how long a note lasts in
   its last step, 17 to 100 %), KNOB 3 the tempo, KNOB 4 the pattern. OCT- twice clears the pattern.
+- **Erase a step:** **SCL** erases the step under the cursor and the ties hanging on it (so on a tie it shortens the note; on the note it
+  removes the whole note). **Undo:** **EDIT** on the sequencer page undoes the last of the 32 most recent changes of recording (each
+  recorded note, each tie a held key adds) and of erases, one at a time; the readout shows how many are left. A step erased by mistake is
+  undone the same way; changes made with the knobs are not in the history.
+- **Metronome and count-in** (GLO, the METRONOME page): MET is OFF, REC (clicks while recording) or PLAY (whenever the sequencer runs); CNT is
+  the count-in, 0 to 8 beats; CLK the level. With REC armed and a count-in, **PLAY counts first** (the header shows IN 4, 3, 2, 1) and the
+  sequencer starts on the next beat, so recording does not begin directly; the keys sound during the count-in but are not recorded, and PLAY
+  cancels it. The first beat of each bar clicks higher. The click is heard in the headphones and speaker, not in the USB audio.
 - **PLAY** starts and stops both parts together; a part whose pattern has no note is left to the keys.
 - **While it plays, a key transposes** the pattern (the key is the new root: C4 plays it as written) and does not sound.
 - **REC** arms recording of the part being edited. Stopped: each key you press sounds and is written to the cursor step, which moves

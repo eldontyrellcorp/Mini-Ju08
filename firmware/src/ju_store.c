@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 /* The 64 patches and the panel's state in flash, on storage.c's A/B objects (a torn write leaves the old copy):
  * the patches in three objects of 23 (OBJ_PROJECT0..2), the current patches and the globals in OBJ_SETTINGS. */
+#ifndef offsetof
+#define offsetof(t, m) __builtin_offsetof(t, m)
+#endif
 #define JU_PPO 23u                                   /* patches per object */
 #define JU_BANK_MAGIC 0x4A553031u                    /* "JU01" */
-#define JU_SET_MAGIC 0x4A555331u                     /* "JUS1" */
+#define JU_SET_MAGIC 0x4A555332u                     /* "JUS2": the global list last, any length (settings saved with fewer globals load) */
 #define JU_SEQ_MAGIC 0x4A535131u                     /* "JSQ1" */
 typedef struct { uint32_t magic; ju_patch_t p[JU_PPO]; } ju_bankobj_t;
-typedef struct { uint32_t magic; uint8_t cur[2]; uint8_t octave; uint8_t pad; uint8_t global[G_COUNT]; uint8_t seqcur[2]; } ju_setobj_t;
+typedef struct { uint32_t magic; uint8_t cur[2]; uint8_t octave; uint8_t pad; uint8_t seqcur[2]; uint8_t pad2[2]; uint8_t global[G_COUNT]; } ju_setobj_t;
 typedef struct { uint32_t magic; ju_pat_t p[JU_SEQ_PATS]; } ju_seqobj_t;         /* one part's 16 patterns */
 _Static_assert(sizeof(ju_bankobj_t) <= ST_PAYLOAD_MAX, "a bank object fits a storage sector");
 _Static_assert(sizeof(ju_setobj_t) <= ST_PAYLOAD_MAX, "the settings object fits a storage sector");
@@ -63,8 +66,9 @@ static void ju_store_boot(void)
     {
         ju_setobj_t so;
         int n = st_load(OBJ_SETTINGS, &so, sizeof so);
-        if (n == (int)sizeof so && so.magic == JU_SET_MAGIC) {
-            memcpy(ju_global, so.global, G_COUNT);
+        int head = (int)offsetof(ju_setobj_t, global);
+        if (n > head && so.magic == JU_SET_MAGIC) {
+            memcpy(ju_global, so.global, (unsigned)(n - head > G_COUNT ? G_COUNT : n - head));
             if (so.cur[0] < 64) ui.patch_idx[0] = so.cur[0];
             if (so.cur[1] < 64) ui.patch_idx[1] = so.cur[1];
             if (so.octave <= 6) ju_octave = (int8_t)so.octave - 3;

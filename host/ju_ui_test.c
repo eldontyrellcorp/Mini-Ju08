@@ -113,8 +113,12 @@ int main(void)
         CHECK(ju_pat[0][0].type[5] == SQ_NOTE);                                                          /* the next note is untouched */
         ju_seq_cursor[0] = 6; in = turn(2, 2); step(&in);                                               /* length on a rest: a new note */
         CHECK(ju_pat[0][0].type[6] == SQ_NOTE && ju_pat[0][0].type[7] == SQ_TIE);
-        ju_seq_cursor[0] = 7; in = press(B_SCL); step(&in);                                              /* SCL on a tie: deletes the whole note */
-        CHECK(ju_pat[0][0].type[6] == SQ_REST && ju_pat[0][0].type[7] == SQ_REST && ui.page == PAGE_SEQ && ju_seq_cursor[0] == 7);
+        ju_seq_cursor[0] = 7; in = press(B_SCL); step(&in); blocks(1);                                   /* SCL on the tie: this step goes, the note stays one step shorter */
+        CHECK(ju_pat[0][0].type[6] == SQ_NOTE && ju_pat[0][0].type[7] == SQ_REST && ui.page == PAGE_SEQ && ju_seq_cursor[0] == 7);
+        in = press(B_EDIT); step(&in); blocks(1);                                                        /* EDIT on the SEQ page: undo, it does not leave the page */
+        CHECK(ju_pat[0][0].type[7] == SQ_TIE && ui.page == PAGE_SEQ);
+        ju_seq_cursor[0] = 6; in = press(B_SCL); step(&in); blocks(1);                                   /* SCL on a note: the note and its tie */
+        CHECK(ju_pat[0][0].type[6] == SQ_REST && ju_pat[0][0].type[7] == SQ_REST);
         CHECK(ju_seq_dirty[0]);
         {   /* the roll follows the note under the cursor */
             ju_pat[0][0].note[1] = 100; ju_pat[0][0].type[1] = SQ_NOTE; ju_seq_cursor[0] = 1; in = turn(0, 0); in.knob[1] = 0; step(&in);
