@@ -83,7 +83,9 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
   removes the whole note). **Undo:** **EDIT** on the sequencer page undoes the last of the 32 most recent changes of recording (each
   recorded note, each tie a held key adds) and of erases, one at a time; the readout shows how many are left. A step erased by mistake is
   undone the same way; changes made with the knobs are not in the history.
-- **Metronome and count-in** (GLO, the METRONOME page): MET is OFF, REC (clicks while recording) or PLAY (whenever the sequencer runs); CNT is
+- **Quantize** (GLO, the RECORDING page, QNT): while recording in real time, a key snaps to the nearest point of a grid: 1/16 (every step, the
+  default), 1/8, 1/4 or 1/2 note. Step entry is not affected (a key writes the cursor step).
+- **Metronome and count-in** (GLO, the RECORDING page): MET is OFF, REC (clicks while recording) or PLAY (whenever the sequencer runs); CNT is
   the count-in, 0 to 8 beats; CLK the level. With REC armed and a count-in, **PLAY counts first** (the header shows IN 4, 3, 2, 1) and the
   sequencer starts on the next beat, so recording does not begin directly; the keys sound during the count-in but are not recorded, and PLAY
   cancels it. The first beat of each bar clicks higher. The click is heard in the headphones and speaker, not in the USB audio.

@@ -619,6 +619,7 @@ volatile uint8_t ju_seq_op, ju_seq_op_part, ju_seq_op_step;      /* ju_seq_op: 1
 
 static uint32_t ju_seq_cnt, ju_seq_cnt_total;            /* count-in: pulses left, and in all */
 static uint32_t ju_seq_pp;                               /* pulses since the start */
+int ju_seq_tick_phase(void) { return ju_seq_tick6; }                  /* ticks of the step run so far (0: the step's last tick has just run) */
 int ju_seq_count_beats_left(void) { return (int)((ju_seq_cnt + 23u) / 24u); }
 
 static void ju_seq_start_state(void)
@@ -747,7 +748,12 @@ static int ju_seq_filter(int mask, int note, int on)
             if (on) {
                 int s;
                 if (!ju_seq_run) { s = ju_seq_cursor[p] % t->len; ju_seq_cursor[p] = (uint8_t)((s + 1) % t->len); }
-                else { s = ju_seq_pos[p]; if (ju_seq_tick6 >= 3) s = (s + 1) % t->len; ju_seq_rec_key[p] = (int16_t)note; ju_seq_rec_step[p] = (int16_t)s; }
+                else {                                               /* real time: to the nearest point of the grid (G_QUANT) */
+                    int g = 1 << (ju_global[G_QUANT] & 3), unit = 6 * g;
+                    int ticks = ju_seq_pos[p] * 6 + (ju_seq_tick6 ? ju_seq_tick6 : 6);          /* ticks since the pattern began */
+                    s = (((ticks + unit / 2) / unit) * g) % t->len;
+                    ju_seq_rec_key[p] = (int16_t)note; ju_seq_rec_step[p] = (int16_t)s;
+                }
                 ju_undo_push(p, s, 0);
                 t->note[s] = (uint8_t)note; t->type[s] = SQ_NOTE;
                 ju_seq_dirty[p] = 1;

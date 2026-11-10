@@ -248,6 +248,32 @@ int main(void)
     ju_seq_op = 1; block();                                                               /* and the first erase, both steps */
     CHECK(ju_pat[0][0].type[1] == SQ_TIE && ju_pat[0][0].type[2] == SQ_TIE && ju_seq_undo_count() == 0);
 
+    /* 13. record quantize: a live key lands on the nearest point of the grid (G_QUANT: 1/16, 1/8, 1/4, 1/2) */
+    {   /* exact cases: the key at known ticks. 1/16: step 6 at 1 tick -> 6; 4 ticks -> 7. 1/4: step 6 -> nearest multiple of 4 is 8 (6.2 is nearer 8 than 4); 1/2: -> 8 */
+        setup(); ju_pat[0][0].len = 16; ju_seq_rec = 1; ju_seq_req = 1; ju_global[G_QUANT] = 0;
+        block(); while (ju_seq_pos[0] != 6) block();
+        ju_note_on_m(1, 66); CHECK(ju_pat[0][0].type[6] == SQ_NOTE && ju_pat[0][0].note[6] == 66 && ju_pat[0][0].type[7] == SQ_REST);
+        ju_note_off_m(1, 66);
+        setup(); ju_pat[0][0].len = 16; ju_seq_rec = 1; ju_seq_req = 1; ju_global[G_QUANT] = 2;                 /* 1/4 */
+        block(); while (ju_seq_pos[0] != 6) block();
+        ju_note_on_m(1, 67); CHECK(ju_pat[0][0].type[8] == SQ_NOTE && ju_pat[0][0].note[8] == 67);
+        ju_note_off_m(1, 67);
+        setup(); ju_pat[0][0].len = 16; ju_seq_rec = 1; ju_seq_req = 1; ju_global[G_QUANT] = 2;
+        block(); while (ju_seq_pos[0] != 5) block();
+        ju_note_on_m(1, 68); CHECK(ju_pat[0][0].type[4] == SQ_NOTE && ju_pat[0][0].note[4] == 68);              /* 5.2 is nearer 4 */
+        ju_note_off_m(1, 68);
+        setup(); ju_pat[0][0].len = 16; ju_seq_rec = 1; ju_seq_req = 1; ju_global[G_QUANT] = 3;                 /* 1/2: points 0, 8 */
+        block(); while (ju_seq_pos[0] != 12) block();
+        ju_note_on_m(1, 69); CHECK(ju_pat[0][0].type[0] == SQ_NOTE && ju_pat[0][0].note[0] == 69);              /* 12.2 is nearer 16 = 0 */
+        ju_note_off_m(1, 69);
+        /* the end of a step belongs to the next one (the key in the last tick) */
+        setup(); ju_pat[0][0].len = 16; ju_seq_rec = 1; ju_seq_req = 1; ju_global[G_QUANT] = 0;
+        block(); while (ju_seq_pos[0] != 3) block();
+        while (ju_seq_tick_phase() != 0) block();                                                                       /* the 6th tick of step 3 has just run */
+        ju_note_on_m(1, 70); CHECK(ju_pat[0][0].type[4] == SQ_NOTE && ju_pat[0][0].note[4] == 70);
+        ju_note_off_m(1, 70);
+    }
+
     printf("sequencer: %s\n", fails ? "FAILED" : "all checks passed");
     return fails ? 1 : 0;
 }

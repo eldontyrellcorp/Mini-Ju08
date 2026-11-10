@@ -72,7 +72,7 @@ static const spage_t kPerfPages[] = {
     {"MASTER", K_ORANGE, 4, {PG(G_VOLUME), PG(G_BAL_U), PG(G_BAL_L), PG(G_TUNE)}},
     {"MIDI", K_YELLOW, 2, {PG(G_CH_U), PG(G_CH_L)}},
     {"SEQ CLOCK", K_ORANGE, 2, {PG(G_SYNC), PG(G_TEMPO)}},
-    {"METRONOME", K_YELLOW, 3, {PG(G_METRO), PG(G_COUNTIN), PG(G_CLICKVOL)}},
+    {"RECORDING", K_YELLOW, 4, {PG(G_METRO), PG(G_COUNTIN), PG(G_CLICKVOL), PG(G_QUANT)}},
 };
 #define NPANELPAGES ((int)(sizeof kPanelPages / sizeof kPanelPages[0]))
 #define NPERFPAGES ((int)(sizeof kPerfPages / sizeof kPerfPages[0]))

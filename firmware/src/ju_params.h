@@ -32,6 +32,7 @@ enum {
     G_METRO,            /* metronome: 0 off, 1 while recording, 2 whenever the sequencer plays */
     G_COUNTIN,          /* beats of count-in before a recording starts: 0 = none */
     G_CLICKVOL,         /* the click's level */
+    G_QUANT,            /* real-time recording snaps to: 0 a step (1/16), 1 1/8, 2 1/4, 3 1/2 note */
     G_COUNT
 };
 
