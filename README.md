@@ -83,7 +83,7 @@ FW_MAIN=felucca.c ./build.sh   # Mini-Tone itself
 The package keeps Mini-Tone's identity string (`FM-1_900`): installing it replaces whatever FM-1 firmware is on the device. Installing
 firmware is at your own risk; if an install fails and the FM-1 no longer starts, recovery needs
 [FM-1-transporter](https://github.com/kurogedelic/FM-1-transporter). This firmware has no update entry, so a later install goes through UBOOT
-(OCT- + OCT+ held 5 s, or the SysEx the installer sends).
+(OCT- + OCT+ held 5 s, or the SysEx the installer sends). The device shows up as "Mini-Ju08" over USB (the update loader as "Felucca Update"); `tools/fm1_install.py` matches both.
 
 ## CPU
 
