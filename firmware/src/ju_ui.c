@@ -43,46 +43,71 @@ typedef struct {
 static const int16_t kCos[33] = {-181, -206, -226, -241, -251, -256, -255, -248, -237, -220, -198, -172, -142, -109, -74, -38, 0, 38, 74, 109, 142, 172, 198, 220, 237, 248, 255, 256, 251, 241, 226, 206, 181};
 static const int16_t kSin[33] = {181, 152, 121, 86, 50, 13, -25, -62, -98, -132, -162, -190, -213, -231, -245, -253, -256, -253, -245, -231, -213, -190, -162, -132, -98, -62, -25, 13, 50, 86, 121, 152, 181};
 
-typedef struct { const char *name; uint16_t color; uint8_t first, count, row; } section_t;
-static const section_t kSections[] = {      /* the panel's left-to-right order, three rows */
-    {"LFO", K_RED, P_LFO_RATE, 3, 0},
-    {"VCO MOD", K_ORANGE, P_VM_LFO, 5, 0},
-    {"VCO-1", K_YELLOW, P_V1_XMOD, 3, 0},
-    {"VCO-2", K_CREAM, P_V2_SYNC, 5, 1},
-    {"MIX", K_BLUE, P_MIX, 1, 1},
-    {"HPF", K_BLUE, P_HPF, 1, 1},
-    {"VCA", K_ORANGE, P_VCA_LEVEL, 2, 1},
-    {"VCF", K_RED, P_VCF_CUT, 7, 2},
-    {"ENV-1", K_YELLOW, P_E1_A, 6, 2},
-    {"ENV-2", K_CREAM, P_E2_A, 5, 2},
-};
-#define NSECTIONS ((int)(sizeof kSections / sizeof kSections[0]))
-#define PANEL_FOCUS P_ASSIGN                /* the focusable parameters of the panel page: all before ASSIGN */
-
+/* The EDIT and GLO (performance) pages are series of pages of 2-6 controls, big enough to read: KNOB 1 walks through the
+ * controls (crossing into the next page), KNOB 3 jumps a page, EDIT / GLO again go to the next page. The focus is the
+ * position in the flat list of all the pages' controls. */
+typedef struct { const char *title; uint16_t color; int8_t n; int16_t ids[8]; } spage_t;
 #define PG(x) (P_COUNT + (x))
-typedef struct { const char *name; uint16_t color; int8_t n, row; int ids[6]; } perfgroup_t;
-static const perfgroup_t kPerf[] = {
-    {"ASSIGN", K_RED, 4, 0, {P_ASSIGN, PG(G_HOLD_U), PG(G_HOLD_L), PG(G_VINTAGE)}},
-    {"KEY", K_ORANGE, 3, 0, {PG(G_KEYMODE), PG(G_PANEL), PG(G_SPLIT)}},
-    {"ARPEGGIO", K_YELLOW, 4, 1, {PG(G_ARP_ON), PG(G_ARP_MODE), PG(G_ARP_RANGE), PG(G_ARP_RATE)}},
-    {"PORTA", K_CREAM, 2, 1, {PG(G_PORTA_MODE), PG(G_PORTA_TIME)}},
-    {"BENDER", K_BLUE, 5, 2, {PG(G_BEND_VCO), PG(G_BEND_V1), PG(G_BEND_V2), PG(G_BEND_VCF), PG(G_BEND_VCFSW)}},
-    {"LFO MOD", K_RED, 5, 2, {PG(G_MOD_RISE), PG(G_MOD_VCO), PG(G_MOD_VCOSW), PG(G_MOD_VCF), PG(G_MOD_VCFSW)}},
-    {"MASTER", K_ORANGE, 4, 3, {PG(G_VOLUME), PG(G_BAL_U), PG(G_BAL_L), PG(G_TUNE)}},
-    {"MIDI", K_YELLOW, 2, 3, {PG(G_CH_U), PG(G_CH_L)}},
+static const spage_t kPanelPages[] = {
+    {"LFO", K_RED, 3, {P_LFO_RATE, P_LFO_DELAY, P_LFO_WAVE}},
+    {"VCO MOD", K_ORANGE, 5, {P_VM_LFO, P_VM_ENV, P_VM_DEST, P_VM_PW, P_VM_PWMODE}},
+    {"VCO-1", K_YELLOW, 3, {P_V1_XMOD, P_V1_RANGE, P_V1_WAVE}},
+    {"VCO-2", K_CREAM, 5, {P_V2_SYNC, P_V2_RANGE, P_V2_LOW, P_V2_TUNE, P_V2_WAVE}},
+    {"MIX HPF VCA", K_BLUE, 4, {P_MIX, P_HPF, P_VCA_LEVEL, P_VCA_LFO}},
+    {"VCF", K_RED, 4, {P_VCF_CUT, P_VCF_RES, P_VCF_ENV, P_VCF_KEY}},
+    {"VCF 2", K_RED, 3, {P_VCF_SLOPE, P_VCF_ENVSEL, P_VCF_LFO}},
+    {"ENV-1", K_YELLOW, 6, {P_E1_A, P_E1_D, P_E1_S, P_E1_R, P_E1_KEY, P_E1_POL}},
+    {"ENV-2", K_CREAM, 5, {P_E2_A, P_E2_D, P_E2_S, P_E2_R, P_E2_KEY}},
 };
-#define NPERF ((int)(sizeof kPerf / sizeof kPerf[0]))
-static int perf_total(void) { int n = 0, i; for (i = 0; i < NPERF; i++) n += kPerf[i].n; return n; }
-static int perf_param_at(int idx)
+static const spage_t kPerfPages[] = {
+    {"ASSIGN", K_RED, 4, {P_ASSIGN, PG(G_HOLD_U), PG(G_HOLD_L), PG(G_VINTAGE)}},
+    {"KEY MODE", K_ORANGE, 3, {PG(G_KEYMODE), PG(G_PANEL), PG(G_SPLIT)}},
+    {"ARPEGGIO", K_YELLOW, 4, {PG(G_ARP_ON), PG(G_ARP_MODE), PG(G_ARP_RANGE), PG(G_ARP_RATE)}},
+    {"PORTAMENTO", K_CREAM, 2, {PG(G_PORTA_MODE), PG(G_PORTA_TIME)}},
+    {"BENDER", K_BLUE, 5, {PG(G_BEND_VCO), PG(G_BEND_V1), PG(G_BEND_V2), PG(G_BEND_VCF), PG(G_BEND_VCFSW)}},
+    {"LFO MOD", K_RED, 5, {PG(G_MOD_RISE), PG(G_MOD_VCO), PG(G_MOD_VCOSW), PG(G_MOD_VCF), PG(G_MOD_VCFSW)}},
+    {"MASTER", K_ORANGE, 4, {PG(G_VOLUME), PG(G_BAL_U), PG(G_BAL_L), PG(G_TUNE)}},
+    {"MIDI", K_YELLOW, 2, {PG(G_CH_U), PG(G_CH_L)}},
+};
+#define NPANELPAGES ((int)(sizeof kPanelPages / sizeof kPanelPages[0]))
+#define NPERFPAGES ((int)(sizeof kPerfPages / sizeof kPerfPages[0]))
+static const spage_t *sp_tab(int page, int *np)
 {
-    int i;
-    for (i = 0; i < NPERF; i++) {
-        if (idx < kPerf[i].n) return kPerf[i].ids[idx];
-        idx -= kPerf[i].n;
-    }
-    return P_ASSIGN;
+    if (page == PAGE_PERF) { *np = NPERFPAGES; return kPerfPages; }
+    *np = NPANELPAGES;
+    return kPanelPages;
 }
-
+static int sp_total(int page)
+{
+    int np, i, n = 0;
+    const spage_t *t = sp_tab(page, &np);
+    for (i = 0; i < np; i++) n += t[i].n;
+    return n;
+}
+static int sp_locate(int page, int flat, int *k)               /* the page holding the flat position, and the control in it */
+{
+    int np, i;
+    const spage_t *t = sp_tab(page, &np);
+    for (i = 0; i < np; i++) {
+        if (flat < t[i].n) { if (k) *k = flat; return i; }
+        flat -= t[i].n;
+    }
+    if (k) *k = 0;
+    return 0;
+}
+static int sp_first(int page, int pg)                          /* the flat position of a page's first control */
+{
+    int np, i, n = 0;
+    const spage_t *t = sp_tab(page, &np);
+    for (i = 0; i < pg; i++) n += t[i].n;
+    return n;
+}
+static int sp_param(int page, int flat)
+{
+    int k, pg = sp_locate(page, flat, &k), np;
+    return sp_tab(page, &np)[pg].ids[k];
+}
+/* a parameter's place (host tools and tests aim the focus with it) */
 /* ---- the effects page: one scrolling list built from whichever effect types are selected */
 typedef struct { uint8_t group, kind; int8_t idx; } fxrow_t;     /* kind 0 switch, 1 MFX type, 2 value, 3 tempo */
 #define FX_MAXROWS 64
@@ -128,7 +153,7 @@ static const qgroup_t kQ[] = {
     {"ENV-2", K_CREAM, {PD(P_E2_A, "ATTACK", "ENV-2 ATTACK"), PD(P_E2_D, "DECAY", "ENV-2 DECAY"), PD(P_E2_S, "SUSTAIN", "ENV-2 SUSTAIN"), PD(P_E2_R, "RELEASE", "ENV-2 RELEASE")}},
     {"VCO", K_ORANGE, {PD(P_MIX, "MIX", "SOURCE MIX V1-V2"), PD(P_V2_TUNE, "FINE", "VCO-2 FINE TUNE"), PD(P_V1_XMOD, "XMOD", "CROSS MOD"), PD(P_VM_PW, "PW", "PULSE WIDTH MOD")}},
     {"LFO", K_RED, {PD(P_LFO_RATE, "RATE", "LFO RATE"), PD(P_LFO_DELAY, "DELAY", "LFO DELAY"), PD(P_VM_LFO, "VCO", "VCO LFO DEPTH"), PD(P_VCF_LFO, "VCF", "VCF LFO DEPTH")}},
-    {"EFFECTS", K_BLUE, {{DK_REV_SEND, 0, "REVERB", "REVERB SEND"}, {DK_DLY_SEND, 0, "DELAY", "DELAY SEND"}, {DK_DLY_TIME, 0, "TIME", "DELAY TIME"}, {DK_DLY_FB, 0, "FEEDBACK", "DELAY FEEDBACK"}}},
+    {"EFFECTS", K_BLUE, {{DK_REV_SEND, 0, "REVERB", "REVERB SEND"}, {DK_DLY_SEND, 0, "DELAY", "DELAY SEND"}, {DK_DLY_TIME, 0, "TIME", "DELAY TIME"}, {DK_DLY_FB, 0, "FDBACK", "DELAY FEEDBACK"}}},
     {"PLAY", K_ORANGE, {PD(P_VCA_LEVEL, "LEVEL", "VCA LEVEL"), {DK_PORTA, 0, "PORTA", "PORTAMENTO TIME"}, GD(G_ARP_RATE, "ARP", "ARP RATE"), {DK_BALANCE, 0, "BALANCE", "PART BALANCE"}}},
 };
 #define NQ ((int)(sizeof kQ / sizeof kQ[0]))
@@ -147,8 +172,18 @@ typedef struct {
     uint8_t overview;
     uint8_t cpu;                        /* percent, for the header */
 } ui_t;
-static ui_t ui = {PAGE_QLINK, 0, {0, P_VCF_CUT, 0, 0, 0}, {8, 0}, 0, 0, {0}, -1, 0, 0, 0, 0, {0}, 1, 0, 0};
+static ui_t ui = {PAGE_QLINK, 0, {0, 0, 0, 0, 0}, {8, 0}, 0, 0, {0}, -1, 0, 0, 0, 0, {0}, 1, 0, 0};
 
+static void ui_focus_on(int page, int id)
+{
+    int np, i, k;
+    const spage_t *t = sp_tab(page, &np);
+    for (i = 0; i < np; i++)
+        for (k = 0; k < t[i].n; k++)
+            if (t[i].ids[k] == id) { ui.focus[page] = sp_first(page, i) + k; return; }
+}
+
+static int cv_text_w_1(const char *x) { return cv_text_w(x, 1); }
 static void ju_store_current(void);                       /* ju_store.c */
 static int ju_store_patch(int idx);
 
@@ -158,8 +193,7 @@ static int ui_focus_count(void)
     fxrow_t r[FX_MAXROWS];
     switch (ui.page) {
     case PAGE_QLINK: return 8;
-    case PAGE_PANEL: return PANEL_FOCUS;
-    case PAGE_PERF: return perf_total();
+    case PAGE_PANEL: case PAGE_PERF: return sp_total(ui.page);
     case PAGE_FX: return fx_rows(&ju_patch[0].fx, r);
     default: return 65;                                   /* 64 patches plus WRITE */
     }
@@ -167,8 +201,7 @@ static int ui_focus_count(void)
 static int ui_focus_param(void)
 {
     switch (ui.page) {
-    case PAGE_PANEL: return ui.focus[PAGE_PANEL];
-    case PAGE_PERF: return perf_param_at(ui.focus[PAGE_PERF]);
+    case PAGE_PANEL: case PAGE_PERF: return sp_param(ui.page, ui.focus[ui.page]);
     default: return -1;
     }
 }
@@ -256,18 +289,12 @@ static void ui_move_focus(int d)
 
 static void ui_jump_section(int d)
 {
-    if (ui.page == PAGE_PANEL) {
-        int s = 0, i;
-        for (i = 0; i < NSECTIONS; i++) if (ui.focus[PAGE_PANEL] >= kSections[i].first) s = i;
-        s = (s + (d > 0 ? 1 : NSECTIONS - 1)) % NSECTIONS;
-        ui.focus[PAGE_PANEL] = kSections[s].first;
-    } else if (ui.page == PAGE_PERF) {
-        int idx = 0, g = 0, f = ui.focus[PAGE_PERF], i;
-        for (i = 0; i < NPERF; i++) { if (f >= idx) g = i; idx += kPerf[i].n; }
-        g = (g + (d > 0 ? 1 : NPERF - 1)) % NPERF;
-        idx = 0;
-        for (i = 0; i < g; i++) idx += kPerf[i].n;
-        ui.focus[PAGE_PERF] = idx;
+    if (ui.page == PAGE_PANEL || ui.page == PAGE_PERF) {      /* a page forward or back */
+        int np, pg;
+        sp_tab(ui.page, &np);
+        pg = sp_locate(ui.page, ui.focus[ui.page], 0);
+        pg = (pg + (d > 0 ? 1 : np - 1)) % np;
+        ui.focus[ui.page] = sp_first(ui.page, pg);
     } else if (ui.page == PAGE_FX) {
         fxrow_t rows[FX_MAXROWS];
         int n = fx_rows(&ju_patch[0].fx, rows), f = ui.focus[PAGE_FX], g, ng, i;
@@ -466,8 +493,8 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     ui.now = now;
 
     if (in->press & BTN(B_HOME)) { if (ui.page == PAGE_QLINK) ui_group_to(ui.qgroup + 1); else { ui.page = PAGE_QLINK; ui.write_mode = 0; } }
-    if (in->press & BTN(B_EDIT)) { ui.page = PAGE_PANEL; ui.write_mode = 0; }
-    if (in->press & BTN(B_GLO)) { ui.page = PAGE_PERF; ui.write_mode = 0; }
+    if (in->press & BTN(B_EDIT)) { if (ui.page == PAGE_PANEL) ui_jump_section(1); ui.page = PAGE_PANEL; ui.write_mode = 0; }
+    if (in->press & BTN(B_GLO)) { if (ui.page == PAGE_PERF) ui_jump_section(1); ui.page = PAGE_PERF; ui.write_mode = 0; }
     if (in->press & BTN(B_FX)) { ui.page = PAGE_FX; ui.write_mode = 0; }
     if (in->press & BTN(B_SAVE)) { ui.page = PAGE_PATCH; ui.write_mode = 0; }
     if (in->press & BTN(B_ENV)) ui_group_to(ui.page == PAGE_QLINK && ui.qgroup == 2 ? 3 : 2);
@@ -527,7 +554,6 @@ static void d_header(void)
 {
     int lay = ui_layer(), pi = ui.patch_idx[lay], i;
     char buf[16];
-    const char *km = ju_plabel(P_COUNT + G_KEYMODE, ju_global[G_KEYMODE] % 4);
     cv_rect(0, 0, CV_W, 22, K_BG);
     cv_text(4, 4, "JUPITER", K_TEXT, 2);
     cv_text(88, 4, "-8", K_RED, 2);
@@ -540,109 +566,76 @@ static void d_header(void)
     for (i = 0; i < JU_NV; i++) {
         int32_t lv = ju_voice_level(i) >> 22;            /* 0..256 */
         int r = 40 + (lv > 255 ? 215 : lv * 215 / 255);
-        cv_rect(174 + i * 8, 4, 6, 5, cv_rgb((uint32_t)r, (uint32_t)(r / 6), (uint32_t)(r / 8)));
+        cv_rect(174 + i * 8, 2, 6, 5, cv_rgb((uint32_t)r, (uint32_t)(r / 6), (uint32_t)(r / 8)));
     }
     buf[0] = 0;
     ui_strcat(buf, sizeof buf, "CPU ");
     ui_num(buf, sizeof buf, ui.cpu);
-    cv_tiny(174, 13, buf, ui.cpu > 85 ? K_RED : K_DIM);
-    cv_tiny(200, 13, km, K_DIM);
-    if (ju_global[G_ARP_ON]) cv_tiny(222, 13, "ARP", K_YELLOW);
+    cv_text(174, 12, buf, ui.cpu > 85 ? K_RED : K_DIM, 1);
+    if (ju_global[G_ARP_ON]) cv_text(218, 12, "ARP", K_YELLOW, 1);
     cv_rect(0, 22, CV_W, 1, K_LINE);
 }
 
+/* One control, large: a slider with a long track, or a selector with its values stacked, or a window for a long list. Names
+ * and values at twice the normal size when they fit. (x, y, w, h) is the control's area. */
 static void d_control(int id, int x, int y, int w, int h, int foc)
 {
-    int steps = ju_psteps(id), v = ui_get(id);
+    int steps = ju_psteps(id), v = ui_get(id), nameS = 2;
     const char *nm = ju_pshort(id);
-    const int labelH = 7;
-    int top = y + (steps >= 4 && steps <= 6 ? 1 : 2), bot = y + h - labelH - 1;
-    if (foc) cv_rect(x, y, w, h, K_FOCBG);
-    if (cv_tiny_w(nm) + 1 <= w) cv_tiny(x + (w - cv_tiny_w(nm) + 1) / 2, y + h - labelH + 1, nm, foc ? K_FOCUS : K_DIM);
-    else cv_tiny_fit(x, y + h - labelH + 1, nm, foc ? K_FOCUS : K_DIM, w);
-    if (steps == 0) {                                   /* slider: track with a tick scale and a pale fader cap */
-        int cx = x + w / 2, H = bot - top, t, fy, cw = w > 13 ? 9 : 7;
-        cv_rect(cx, top, 1, H, K_LINE);
-        for (t = 0; t <= 5; t++) cv_rect(cx - 2, top + (H - 1) * t / 5, 5, 1, CV_RGB(46, 46, 50));
-        fy = bot - 3 - (H - 3) * v / 255;
-        cv_rect(cx - cw / 2, fy, cw, 4, foc ? K_FOCUS : K_CREAM);
-        cv_rect(cx - cw / 2, fy + 1, cw, 1, K_BG);
-    } else if (steps > 6) {                             /* too many values to stack (a MIDI channel): the current one in a window */
+    const int labelH = 18;
+    int top = y + 4, bot = y + h - labelH - 2;
+    uint16_t ink = foc ? K_FOCUS : K_TEXT;
+    if (foc) cv_rect(x + 1, y, w - 2, h, K_FOCBG);
+    if (cv_text_w(nm, 2) > w - 2) nameS = 1;
+    cv_text(x + (w - cv_text_w(nm, nameS)) / 2, y + h - (nameS == 2 ? 15 : 11), nm, ink, nameS);
+    if (steps == 0) {                                   /* a slider: a track with its scale and a pale cap */
+        int cx = x + w / 2, H = bot - top, t, fy, cw = w - 14 > 32 ? 32 : w - 14;
+        cv_rect(cx - 1, top, 3, H, K_LINE);
+        for (t = 0; t <= 10; t++) cv_rect(cx - 6, top + (H - 1) * t / 10, t % 5 ? 5 : 11, 1, CV_RGB(60, 60, 66));
+        fy = bot - 8 - (H - 8) * v / 255;
+        cv_rect(cx - cw / 2, fy, cw, 9, foc ? K_FOCUS : K_CREAM);
+        cv_rect(cx - cw / 2, fy + 4, cw, 1, K_BG);
+    } else if (steps > 6) {                             /* a MIDI channel: the current one in a window */
         const char *lab = ju_plabel(id, v < steps ? v : 0);
-        int boxY = y + (h - labelH) / 2 - 8;
-        cv_frame(x + 1, boxY, w - 2, 15, foc ? K_FOCUS : K_LINE);
-        if (cv_text_w(lab, 1) <= w - 4) cv_text(x + (w - cv_text_w(lab, 1)) / 2, boxY + 4, lab, foc ? K_FOCUS : K_LEDON, 1);
-        else cv_tiny(x + (w - cv_tiny_w(lab)) / 2, boxY + 5, lab, foc ? K_FOCUS : K_LEDON);
-    } else {                                            /* selector: stacked labels, an LED beside the active one */
-        int n = steps, rowH = (bot - top) / (n > 4 ? n : 4), yy = top, i;
-        if (rowH < 7) rowH = n >= 4 && (bot - top) < 7 * n ? 6 : 7;
-        for (i = n - 1; i >= 0; i--) {                  /* the first value at the bottom, as switches read */
-            int on = v == i;
-            const char *lb = ju_plabel(id, i);
-            cv_rect(x + 1, yy + 1, 2, 3, on ? K_LEDON : K_LEDOFF);
-            if (cv_tiny_w(lb) + 4 <= w) cv_tiny(x + 4, yy, lb, on ? (foc ? K_FOCUS : K_TEXT) : K_DIM);
-            else cv_tiny_fit(x + 3, yy, lb, on ? (foc ? K_FOCUS : K_TEXT) : K_DIM, w - 3);
+        int boxY = top + (bot - top) / 2 - 14, s2 = cv_text_w(lab, 2) <= w - 6 ? 2 : 1;
+        cv_frame(x + 3, boxY, w - 6, 28, foc ? K_FOCUS : K_LINE);
+        cv_text(x + (w - cv_text_w(lab, s2)) / 2, boxY + (s2 == 2 ? 7 : 10), lab, foc ? K_FOCUS : K_LEDON, s2);
+    } else {                                            /* a selector: the values stacked, an LED beside the active one */
+        int n = steps, rowH = (bot - top) / n, yy = top, i, s2 = 2;
+        if (rowH > 30) rowH = 30;
+        if (rowH < 15) s2 = 1;
+        for (i = 0; i < n; i++) {                       /* the last value on top, as a switch reads (the first at the bottom) */
+            int val = n - 1 - i, on = v == val;
+            const char *lb = ju_plabel(id, val);
+            int ls = (s2 == 2 && cv_text_w(lb, 2) + 12 <= w) ? 2 : 1;
+            cv_rect(x + 3, yy + rowH / 2 - 3, 4, 7, on ? K_LEDON : K_LEDOFF);
+            cv_text(x + 10, yy + (rowH - 7 * ls) / 2, lb, on ? ink : K_DIM, ls);
             yy += rowH;
         }
     }
 }
 
-static void d_panel(void)
+/* a page of the EDIT or GLO series: a title bar with a dot for each page, and its controls across the width */
+static void d_spage(int page)
 {
-    static const int rowY[3] = {24, 83, 142};
-    const int rowH = 57, gap = 2, selW = 16;
-    int r, s, i;
-    for (r = 0; r < 3; r++) {
-        int nSlider = 0, nSel = 0, nSec = 0, avail, slW, rem, x = gap, sIdx = 0;
-        for (s = 0; s < NSECTIONS; s++) if (kSections[s].row == r) {
-            nSec++;
-            for (i = 0; i < kSections[s].count; i++) { if (ju_psteps(kSections[s].first + i)) nSel++; else nSlider++; }
-        }
-        if (!cv_sees(rowY[r], rowH)) continue;
-        avail = CV_W - gap * (nSec + 1) - selW * nSel;
-        slW = avail / nSlider; rem = avail % nSlider;
-        for (s = 0; s < NSECTIONS; s++) if (kSections[s].row == r) {
-            const section_t *se = &kSections[s];
-            int w = 0, cx, tw;
-            int ws[8];
-            for (i = 0; i < se->count; i++) {
-                if (ju_psteps(se->first + i)) ws[i] = selW;
-                else ws[i] = slW + (sIdx++ < rem ? 1 : 0);
-                w += ws[i];
-            }
-            cv_rect(x, rowY[r], w, rowH, K_PANEL);
-            cv_rect(x, rowY[r], w, 9, se->color);
-            tw = cv_tiny_w(se->name);
-            cv_tiny(x + (w - tw) / 2, rowY[r] + 2, se->name, K_BG);
-            cx = x;
-            for (i = 0; i < se->count; i++) {
-                d_control(se->first + i, cx, rowY[r] + 10, ws[i], rowH - 11, ui.focus[PAGE_PANEL] == se->first + i);
-                cx += ws[i];
-            }
-            x += w + gap;
-        }
+    int np, k, pg = sp_locate(page, ui.focus[page], &k), i;
+    const spage_t *t = sp_tab(page, &np), *p;
+    p = &t[pg];
+    cv_rect(0, 24, CV_W, 20, p->color);
+    cv_text(6, 27, p->title, K_BG, 2);
+    for (i = 0; i < np; i++) {                          /* where this page is among the others */
+        int x = CV_W - 6 - (np - i) * 10;
+        cv_rect(x, 30, 8, 8, i == pg ? K_BG : p->color);
+        cv_frame(x, 30, 8, 8, K_BG);
+    }
+    if (!cv_sees(46, 152)) return;
+    for (i = 0; i < p->n; i++) {
+        int x0 = i * CV_W / p->n, x1 = (i + 1) * CV_W / p->n;
+        d_control(p->ids[i], x0, 46, x1 - x0, 152, i == k);
     }
 }
-
-static void d_perf(void)
-{
-    const int rowH = 43;
-    int r, g, k, focusId = ui_focus_param();
-    for (r = 0; r < 4; r++) {
-        int total = 0, x = 2, y = 24 + r * 44;
-        if (!cv_sees(y, rowH)) continue;
-        for (g = 0; g < NPERF; g++) if (kPerf[g].row == r) total += kPerf[g].n;
-        for (g = 0; g < NPERF; g++) if (kPerf[g].row == r) {
-            const perfgroup_t *pg = &kPerf[g];
-            int each = (CV_W - 10) * pg->n / total, wi = each - 2, cw = wi / pg->n;
-            cv_rect(x, y, wi, rowH, K_PANEL);
-            cv_rect(x, y, wi, 9, pg->color);
-            cv_tiny(x + (wi - cv_tiny_w(pg->name)) / 2, y + 2, pg->name, K_BG);
-            for (k = 0; k < pg->n; k++) d_control(pg->ids[k], x + k * cw, y + 10, cw, rowH - 11, pg->ids[k] == focusId);
-            x += each;
-        }
-    }
-}
+static void d_panel(void) { d_spage(PAGE_PANEL); }
+static void d_perf(void) { d_spage(PAGE_PERF); }
 
 static void d_patches(void)
 {
@@ -653,7 +646,7 @@ static void d_patches(void)
     for (i = 1; i <= 8; i++) {
         char b[2];
         b[0] = (char)('0' + i); b[1] = 0;
-        cv_tiny(ox + 11 + (i - 1) * (cw + 1), 25, b, K_DIM);
+        cv_text(ox + 11 + (i - 1) * (cw + 1), 25, b, K_DIM, 1);
     }
     for (i = 0; i < 64; i++) {
         int bank = i / 8, num = i % 8, x = ox + num * (cw + 1), y = oy + bank * (ch + 1);
@@ -666,8 +659,8 @@ static void d_patches(void)
         if (i == f) { cv_frame(x - 1, y - 1, cw + 2, ch + 2, K_FOCUS); cv_frame(x, y, cw, ch, K_FOCUS); }
     }
     cv_text(6, 158, hp->name, K_TEXT, 2);
-    cv_tiny(6, 178, ui.write_mode ? "PICK A SLOT" : "OCT+ LOADS", ui.write_mode ? K_RED : K_DIM);
-    cv_tiny(6, 186, ui.write_mode ? "OCT+ WRITES  OCT- CANCELS" : "KNOB 1/2 MOVE", ui.write_mode ? K_RED : K_DIM);
+    cv_text(6, 178, ui.write_mode ? "PICK A SLOT" : "OCT+ LOADS", ui.write_mode ? K_RED : K_DIM, 1);
+    cv_text(6, 186, ui.write_mode ? "OCT+ WRITES  OCT- CANCELS" : "KNOB 1/2 MOVE", ui.write_mode ? K_RED : K_DIM, 1);
     cv_rect(160, 168, 70, 24, f == 64 ? K_FOCUS : (ui.write_mode ? K_RED : K_PANEL));
     cv_frame(160, 168, 70, 24, K_RED);
     cv_text(180, 177, "WRITE", f == 64 ? K_BG : K_TEXT, 1);
@@ -698,7 +691,6 @@ static void d_fx(void)
         if (!cv_sees(y, rowH)) continue;
         cv_rect(0, y, CV_W, rowH - 1, foc ? K_FOCBG : K_PANEL);
         cv_rect(0, y, 3, rowH - 1, kFxCols[r->group]);
-        cv_tiny(6, y + 3, kFxTags[r->group], K_DIM);
         val[0] = 0;
         switch (r->kind) {
         case 0: name = "SWITCH"; cur = on[r->idx]; ui_strcat(val, sizeof val, cur ? "ON" : "OFF"); break;
@@ -713,9 +705,9 @@ static void d_fx(void)
         }
         nw = cv_text_w(name, 1);
         vw = cv_text_w(val, 1);
-        cv_text(26, y + 2, name, foc ? K_FOCUS : K_TEXT, 1);
-        if (26 + nw + 8 + vw <= CV_W - 4) cv_text(CV_W - vw - 4, y + 2, val, foc ? K_FOCUS : K_TEXT, 1);
-        else cv_tiny(CV_W - cv_tiny_w(val) - 4, y + 3, val, foc ? K_FOCUS : K_TEXT);
+        cv_text(8, y + 2, name, foc ? K_FOCUS : K_TEXT, 1);
+        if (8 + nw + 8 + vw <= CV_W - 4) cv_text(CV_W - vw - 4, y + 2, val, foc ? K_FOCUS : K_TEXT, 1);
+        else cv_text(CV_W - cv_text_w_1(val) - 4, y + 3, val, foc ? K_FOCUS : K_TEXT, 1);
         if (r->kind == 2 && hi > lo) cv_rect(CV_W - 64, y + rowH - 2, (cur - lo) * 60 / (hi - lo), 1, kFxCols[r->group]);
     }
     if (n > vis) {                                      /* scroll position */
@@ -727,7 +719,7 @@ static void d_fx(void)
 /* all groups, one row each, with a square around the group the knobs control */
 static void d_overview(void)
 {
-    const int y0 = 24, rowH = 19, nameW = 66, colW = (CV_W - nameW - 4) / 4;
+    const int y0 = 24, rowH = 19, nameW = 64, colW = (CV_W - nameW - 4) / 4;
     int r, i, y;
     for (r = 0; r < NQ; r++) {
         const qgroup_t *g = &kQ[r];
@@ -735,7 +727,7 @@ static void d_overview(void)
         if (on) cv_rect(2, yy, CV_W - 4, rowH, K_PANEL);
         cv_rect(5, yy + 4, 3, rowH - 8, g->color);
         cv_text(11, ty, g->name, on ? K_TEXT : K_DIM, 1);
-        for (i = 0; i < 4; i++) cv_tiny(nameW + i * colW + 2, ty + 1, g->d[i].name, on ? K_TEXT : K_DIM);
+        for (i = 0; i < 4; i++) cv_text(nameW + i * colW + 2, ty, g->d[i].name, on ? K_TEXT : K_DIM, 1);
     }
     y = y0 + ui.qgroup * rowH;
     cv_frame(2, y, CV_W - 4, rowH, K_FOCUS);
@@ -773,7 +765,7 @@ static void d_qlink(void)
         for (k = 7; k < 19; k++) cv_rect(cx + (kCos[kk] * k) / 256 - 1, cy + (kSin[kk] * k) / 256 - 1, 2, 2, K_TEXT);
         q_format(i, val, sizeof val);
         vw = cv_text_w(val, 1);
-        if (vw > w - 4) cv_tiny(cx - cv_tiny_w(val) / 2, 150, val, active ? K_FOCUS : K_TEXT);
+        if (cv_text_w(val, 2) <= w - 2) cv_text(cx - cv_text_w(val, 2) / 2, 144, val, active ? K_FOCUS : K_TEXT, 2);
         else cv_text(cx - vw / 2, 148, val, active ? K_FOCUS : K_TEXT, 1);
         if (q_edited(i)) cv_rect(cx - 2, 162, 5, 3, K_LEDON);   /* a small mark: differs from the saved patch */
     }
@@ -793,16 +785,16 @@ static void d_readout(void)
         ui_num(line, sizeof line, lay + 1);
         ui_strcat(line, sizeof line, "  CH ");
         ui_strcat(line, sizeof line, ju_plabel(P_COUNT + G_CH_U, ju_global[lay ? G_CH_L : G_CH_U] % 17));
-        cv_tiny(6, yy + 4, line, K_DIM);
+        cv_text(6, yy + 4, line, K_DIM, 1);
         cv_text(6, yy + 14, ju_bank[ui.patch_idx[lay]].name, K_TEXT, 2);
         if (ui.now - ui.last_dial_at < 1200u && ui.last_dial >= 0) {
             const char *ln = kQ[ui.qgroup].d[ui.last_dial].longName;
             q_format(ui.last_dial, val, sizeof val);
-            cv_tiny(CV_W - cv_tiny_w(ln) - 6, yy + 4, ln, K_DIM);
+            cv_text(CV_W - cv_text_w_1(ln) - 6, yy + 4, ln, K_DIM, 1);
             cv_text(CV_W - cv_text_w(val, 2) - 6, yy + 22, val, K_FOCUS, 2);
         }
-        cv_tiny(6, yy + 40, "SELECT GROUP  ALGO PART  PRESETS PATCH", K_DIM);
-        cv_tiny(6, yy + 48, "REC + KNOB: SAVED VALUE", K_DIM);
+        cv_text(6, yy + 40, "SELECT GROUP  ALGO PART  PRESETS PATCH", K_DIM, 1);
+        cv_text(6, yy + 48, "REC + KNOB: SAVED VALUE", K_DIM, 1);
         return;
     }
     cv_rect(0, y, CV_W, CV_H - y, K_BG);
@@ -830,7 +822,7 @@ static void d_readout(void)
         vw = cv_text_w(val, 2);
         if (vw > CV_W - 12) cv_text(CV_W - cv_text_w(val, 1) - 6, y + 18, val, K_FOCUS, 1);
         else cv_text(CV_W - vw - 6, y + 16, val, K_FOCUS, 2);
-        cv_tiny(6, y + 30, "SAVED WITH THE PATCH", K_DIM);
+        cv_text(6, y + 30, "SAVED WITH THE PATCH", K_DIM, 1);
         return;
     }
     if (ui.page == PAGE_PATCH) {
@@ -840,15 +832,15 @@ static void d_readout(void)
         ui_strcat(line, sizeof line, lay ? "PART 2 LOWER" : "PART 1 UPPER");
         ui_strcat(line, sizeof line, "  MIDI CH ");
         ui_strcat(line, sizeof line, ju_plabel(P_COUNT + G_CH_U, ju_global[lay ? G_CH_L : G_CH_U] % 17));
-        cv_tiny(6, y + 26, line, K_DIM);
+        cv_text(6, y + 26, line, K_DIM, 1);
         return;
     }
     if (id < 0) return;
     ju_format_param(id, ui_get(id), val, sizeof val);
     cv_text(6, y + 5, ju_plong(id), K_DIM, 1);
     cv_text(CV_W - cv_text_w(val, 2) - 6, y + 14, val, K_FOCUS, 2);
-    cv_tiny(6, y + 20, ju_bank[ui.patch_idx[lay]].name, K_DIM);
-    cv_tiny(6, y + 30, "KNOB 1 MOVE  KNOB 2 VALUE  HOME DIALS", K_DIM);
+    cv_text(6, y + 20, ju_bank[ui.patch_idx[lay]].name, K_DIM, 1);
+    cv_text(6, y + 30, "KNOB 1 MOVE  KNOB 2 VALUE  HOME DIALS", K_DIM, 1);
 }
 
 static void ui_draw(void)

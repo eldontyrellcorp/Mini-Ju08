@@ -48,6 +48,25 @@ int main(void)
     in = press(B_HOME); step(&in); CHECK(ui.page == PAGE_QLINK);
     in = press(B_HOME); step(&in); CHECK(ui.qgroup == 0 && ui.page == PAGE_QLINK);   /* HOME again: next group (7 -> 0) */
 
+    /* the EDIT and GLO series: pages of a few controls, KNOB 1 crosses into the next page, KNOB 3 and the button jump a page */
+    in = press(B_EDIT); step(&in); in = press(B_EDIT); step(&in);
+    CHECK(ui.page == PAGE_PANEL && sp_locate(PAGE_PANEL, ui.focus[PAGE_PANEL], 0) == 1);          /* EDIT twice: the second page */
+    in = turn(2, 1); step(&in); CHECK(sp_locate(PAGE_PANEL, ui.focus[PAGE_PANEL], 0) == 2);       /* KNOB 3: a page on */
+    in = turn(2, -1); step(&in); in = turn(2, -1); step(&in); CHECK(sp_locate(PAGE_PANEL, ui.focus[PAGE_PANEL], 0) == 0);
+    in = turn(2, -1); step(&in); CHECK(sp_locate(PAGE_PANEL, ui.focus[PAGE_PANEL], 0) == NPANELPAGES - 1);   /* and round */
+    ui.focus[PAGE_PANEL] = 0;
+    in = turn(0, 3); step(&in); CHECK(ui.focus[PAGE_PANEL] == 3 && sp_locate(PAGE_PANEL, 3, 0) == 1 && sp_param(PAGE_PANEL, 3) == P_VM_LFO);   /* KNOB 1 crosses */
+    {   /* every sound parameter is on a page, once */
+        int seen[P_COUNT] = {0}, i, ok = 1;
+        for (i = 0; i < sp_total(PAGE_PANEL); i++) seen[sp_param(PAGE_PANEL, i)]++;
+        for (i = 0; i < P_ASSIGN; i++) ok = ok && seen[i] == 1;
+        CHECK(ok && sp_total(PAGE_PANEL) == P_ASSIGN);
+    }
+    ui.focus[PAGE_PANEL] = sp_first(PAGE_PANEL, 0);
+    in = turn(1, 1); ui.page = PAGE_PANEL; step(&in); CHECK(ju_patch[ui_layer()].v[P_LFO_RATE] > 0);     /* KNOB 2 sets the focused one */
+    in = press(B_GLO); step(&in); in = press(B_GLO); step(&in);
+    CHECK(ui.page == PAGE_PERF && sp_locate(PAGE_PERF, ui.focus[PAGE_PERF], 0) == 1);
+
     /* SELECT steps the group, in both directions, and leaves any other page */
     memset(&in, 0, sizeof in); in.sel = 1; step(&in); CHECK(ui.qgroup == 1);
     in.sel = -1; step(&in); step(&in); CHECK(ui.qgroup == 7);

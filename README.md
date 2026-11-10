@@ -44,14 +44,14 @@ reverb (five types and shimmer) as in the ESP32 version. See `~/jupiter8_esp32/R
 
 | Control | Does |
 |---|---|
-| KNOB 1-4 | The four dials of the Q-Link page. On the other pages: KNOB 1 chooses, KNOB 2 sets, KNOB 3 jumps a section, KNOB 4 steps the patch |
+| KNOB 1-4 | The four dials of the Q-Link page. On the other pages: KNOB 1 chooses (and carries on into the next page), KNOB 2 sets, KNOB 3 jumps a page, KNOB 4 steps the patch |
 | SELECT | The Q-Link group (and back to the Q-Link page) |
 | PRESETS | Patch, 11-88 |
 | ALGORITHM | Upper / Lower part (the keys play the part being edited) |
 | MASTER | Volume |
 | HOME | Q-Link page; again: next group |
 | ENV / LFO / SEQ / SCL | Q-Link groups: ENV-1 and ENV-2 / LFO / VCO / PLAY |
-| EDIT / GLO / FX / SAVE | Panel (every sound control) / Performance / Effects / Patches |
+| EDIT / GLO / FX / SAVE | EDIT: the sound controls, one section per page (LFO, VCO MOD, VCO-1, VCO-2, MIX HPF VCA, VCF, VCF 2, ENV-1, ENV-2). GLO: the performance pages (assign, key mode, arpeggio, portamento, bender, LFO mod, master, MIDI). Press EDIT or GLO again for the next page. FX: effects. SAVE: patches |
 | ARP | Arpeggio on / off |
 | PLAY | All notes off |
 | REC held + a knob | That dial back to the saved patch's value |

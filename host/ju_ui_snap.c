@@ -68,8 +68,10 @@ int main(int argc, char **argv)
     ui.qgroup = 3; ui.overview = 1; ui.overview_at = 1100;
     snprintf(path, sizeof path, "%s/overview.ppm", dir); frame(path, 1200);
     ui.overview = 0;
-    ui.page = PAGE_PANEL; ui.focus[PAGE_PANEL] = P_VCF_CUT; snprintf(path, sizeof path, "%s/panel.ppm", dir); frame(path, 5000);
-    ui.page = PAGE_PERF; ui.focus[PAGE_PERF] = 5; snprintf(path, sizeof path, "%s/perf.ppm", dir); frame(path, 5000);
+    for (g = 0; g < NPANELPAGES; g++) { ui.page = PAGE_PANEL; ui.focus[PAGE_PANEL] = sp_first(PAGE_PANEL, g); snprintf(path, sizeof path, "%s/panel%d.ppm", dir, g); frame(path, 5000); }
+    for (g = 0; g < NPERFPAGES; g++) { ui.page = PAGE_PERF; ui.focus[PAGE_PERF] = sp_first(PAGE_PERF, g); snprintf(path, sizeof path, "%s/perf%d.ppm", dir, g); frame(path, 5000); }
+    ui.page = PAGE_PANEL; ui_focus_on(PAGE_PANEL, P_VCF_CUT); snprintf(path, sizeof path, "%s/panel.ppm", dir); frame(path, 5000);
+    ui.page = PAGE_PERF; ui_focus_on(PAGE_PERF, PG(G_ARP_MODE)); snprintf(path, sizeof path, "%s/perf.ppm", dir); frame(path, 5000);
     ui.page = PAGE_FX; ui.focus[PAGE_FX] = 4; snprintf(path, sizeof path, "%s/fx.ppm", dir); frame(path, 5000);
     ju_patch[0].fx.mfxType = MFX_PCH2; ju_patch[0].fx.mfxOn = 1; ju_patch[0].fx.revOn = 1;
     ui.focus[PAGE_FX] = 12; snprintf(path, sizeof path, "%s/fx2.ppm", dir); frame(path, 5000);
