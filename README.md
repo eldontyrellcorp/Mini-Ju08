@@ -80,6 +80,7 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
   under the cursor (the header shows SNG and the row); it stops after the last row, or starts again with LUP on. Recording during a song
   overdubs into the pattern the row is playing. The song is saved in flash like the patterns.
 
+- While a song plays, the roll and the step pages show the patterns the song is playing.
 - **Step details** (press SEQ again after the roll: two more pages, then the setup and the song). They edit the step under the cursor (KNOB 1
   moves it; SCL erases it):
   - page 1: KNOB 2 **velocity** (ghost, soft, normal, accent: the VCA level, 0.3 / 0.6 / 1 / 1.4), KNOB 3 **probability** (25, 50, 75, 100 % chance
@@ -128,6 +129,12 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
 USB MIDI and TRS MIDI in. Notes, pitch bend, mod wheel (CC 1), sustain (CC 64), all notes off, program change 0-63 to
 patches 11-88, and the CC map of the ESP32 version (CC 20-56 and 59-90 for the sound, 91 / 94 / 93 for reverb send, delay send and
 CHORUS & MFX on). In 2-Part mode the channels are set on the Performance page (MIDI group: CH1, CH2, OMNI or 1-16).
+
+## Demonstration video
+
+`python3 tools/make_demo.py` renders a Full HD video (about two minutes): a tour of eight patches, then a Berlin-School piece played by the sequencer
+in song mode. The sound and the screen come from the firmware's own engine and panel UI (the host build, `host/ju_demo.c`), so it is what the
+sources do, not a recording of a device. Needs gcc, ffmpeg, Pillow and numpy; the result goes to `docs/Mini-Ju08-demo.mp4` (not in the repository).
 
 ## Building
 

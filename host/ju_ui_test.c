@@ -308,6 +308,13 @@ int main(void)
     cv_force = 1; cv_present(ui_draw); ui.seq_sub = 3; cv_force = 1; cv_present(ui_draw); ui.seq_sub = 0; cv_force = 1; cv_present(ui_draw);
     seq_to(0); ui.page = PAGE_QLINK;
 
+    /* a song plays: the pattern shown is the one playing */
+    ju_song.n = 2; ju_song.row[0].pat[0] = 3; ju_song.row[0].pat[1] = 5; ju_song.row[0].rep = 1; ju_song.row[1].pat[0] = 7; ju_song.row[1].pat[1] = JU_SONG_NONE; ju_song.row[1].rep = 1;
+    ju_global[G_SONG] = 1; ju_song_sel = 0; ju_seq_cur[0] = 0; ju_seq_cur[1] = 0; ju_seq_req = 1; blocks(2);
+    memset(&in, 0, sizeof in); step(&in);
+    CHECK(ju_song_playing() && ju_seq_cur[0] == 3 && ju_seq_cur[1] == 5);
+    ju_seq_req = 2; blocks(2); ju_global[G_SONG] = 0; ju_song.n = 0; ju_seq_cur[0] = ju_seq_cur[1] = 0;
+
     /* About: GLO past the last performance page, GLO again to come back */
     ui.page = PAGE_PERF; ui.focus[PAGE_PERF] = 0;
     { int k, np; sp_tab(PAGE_PERF, &np);

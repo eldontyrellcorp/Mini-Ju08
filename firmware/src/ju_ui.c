@@ -962,6 +962,10 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     }
     if (ui.page == PAGE_SEQ) ui_seq_view();
     ui_proj_track(now);
+    if (ju_song_playing()) {                                    /* a song plays: the roll and the step pages show the patterns it plays */
+        int pp;
+        for (pp = 0; pp < 2; pp++) { int k = ju_seq_playing_pat(pp); if (k >= 0 && k != ju_seq_cur[pp]) ju_seq_cur[pp] = (uint8_t)k; }
+    }
     if (ui.overview && now - ui.overview_at >= OVERVIEW_MS) ui.overview = 0;
 
     if ((ju_seq_dirty[0] || ju_seq_dirty[1] || ju_song_dirty) && !ui.seq_save_at) ui.seq_save_at = now + 2000u;
