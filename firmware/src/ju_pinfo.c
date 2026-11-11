@@ -117,6 +117,7 @@ static const ju_pinfo_t kInfo[P_COUNT + G_COUNT] = {
     {"KEY", "KEYS OVER A PATTERN", SEL(kSeqKeys), 0},
     {"SNG", "SONG MODE", SEL(kOffOn2), 0},
     {"LUP", "SONG LOOP", SEL(kOffOn2), 0},
+    {"AUT", "AUTOSAVE", SEL(kOffOn2), 1},
 };
 
 const char *ju_pshort(int id) { return kInfo[id].shortName; }

@@ -73,6 +73,7 @@ static const spage_t kPerfPages[] = {
     {"MIDI", K_YELLOW, 2, {PG(G_CH_U), PG(G_CH_L)}},
     {"SEQUENCER", K_ORANGE, 5, {PG(G_SYNC), PG(G_TEMPO), PG(G_SEQKEYS), PG(G_SONG), PG(G_SONGLOOP)}},
     {"RECORDING", K_YELLOW, 4, {PG(G_METRO), PG(G_COUNTIN), PG(G_CLICKVOL), PG(G_QUANT)}},
+    {"STORAGE", K_BLUE, 1, {PG(G_AUTOSAVE)}},
 };
 #define NPANELPAGES ((int)(sizeof kPanelPages / sizeof kPanelPages[0]))
 #define NPERFPAGES ((int)(sizeof kPerfPages / sizeof kPerfPages[0]))
@@ -207,12 +208,13 @@ typedef struct {
     uint8_t song_cur;                   /* the song page's row (n: the empty row after the last) */
     int8_t proj_cur;                    /* the project open (last saved or loaded), -1: none */
     uint8_t proj_sel, proj_ask;         /* the project page's cursor; a confirmation asked: 0 none, 1 save, 2 load, 3 clear */
+    uint8_t auto_seen, auto_chg;        /* the autosave option as last seen (2: not yet); it changed and must be written once */
     uint32_t busy_at;                   /* when something last sounded or the sequencer last ran (autosaves wait for quiet) */
     uint8_t sig_pend;                   /* a project was loaded: its signature is taken once the engine has its sounds */
     uint32_t proj_sig, work_sig, sig_at, proj_msg_at;   /* signature of the open project as saved; of the working copy; when taken; when the message was set */
     const char *proj_msg;               /* what the last save / load did, shown for a few seconds */
 } ui_t;
-static ui_t ui = {.page = PAGE_QLINK, .patch_idx = {8, 0}, .song_cur = 0, .last_dial = -1, .overview = 1, .proj_cur = -1};
+static ui_t ui = {.page = PAGE_QLINK, .patch_idx = {8, 0}, .song_cur = 0, .last_dial = -1, .overview = 1, .proj_cur = -1, .auto_seen = 2};
 
 static void ui_focus_on(int page, int id)
 {
@@ -823,8 +825,15 @@ static void ui_update(const ju_in_t *in, uint32_t now)
         int busy = ju_seq_run || ju_seq_rec;
         for (i = 0; i < JU_NV && !busy; i++) busy = ju_voice_level(i) != 0;
         if (busy) ui.busy_at = now ? now : 1u;
+        if (ju_global[G_AUTOSAVE] != ui.auto_seen) { ui.auto_chg = ui.auto_seen != 2; ui.auto_seen = ju_global[G_AUTOSAVE]; }
         if (!busy && now - ui.busy_at >= 1500u) {
-            if (ui.seq_save_at && (int32_t)(now - ui.seq_save_at) > 0) {
+            if (ui.auto_chg) {                           /* the option itself is kept, off or on */
+                ui.auto_chg = 0; ui.save_at = 0;
+                memcpy(ui.saved_global, ju_global, G_COUNT);
+                ju_store_current();
+            } else if (!ju_global[G_AUTOSAVE]) {
+                /* autosave off: patterns, song and sounds are only kept by SAVE (patches, projects) */
+            } else if (ui.seq_save_at && (int32_t)(now - ui.seq_save_at) > 0) {
                 int part;
                 ui.seq_save_at = 0; ui.save_at = 0;
                 for (part = 0; part < 2; part++) if (ju_seq_dirty[part]) { ju_seq_dirty[part] = 0; (void)ju_store_seq(part); }

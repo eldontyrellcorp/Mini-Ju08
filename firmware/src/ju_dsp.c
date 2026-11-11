@@ -937,6 +937,7 @@ void ju_global_defaults(uint8_t *g)
     g[G_VINTAGE] = 128;
     g[G_TEMPO] = 80;
     g[G_CLICKVOL] = 170;
+    g[G_AUTOSAVE] = 1;
 }
 
 #define JU_C(x) ((int32_t)((x) * 65536.0))

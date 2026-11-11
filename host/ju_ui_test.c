@@ -278,6 +278,11 @@ int main(void)
     memset(&in, 0, sizeof in); T += 3000; ui_update(&in, T);
     CHECK(stored_cur == 1 && ui.saved_global[G_VOLUME] == 150);
 
+    /* autosave off: nothing is written by itself, but the option is; back on, the pending save happens */
+    ui.page = PAGE_PERF; stored_cur = 0; memset(&in, 0, sizeof in);
+    ju_global[G_AUTOSAVE] = 0; T += 3000; ui_update(&in, T); T += 3000; ui_update(&in, T); CHECK(stored_cur == 1);     /* the option itself */
+    ju_global[G_VOLUME] = 140; ui.save_at = T + 100; T += 5000; ui_update(&in, T); T += 5000; ui_update(&in, T); CHECK(stored_cur == 1);
+    ju_global[G_AUTOSAVE] = 1; T += 3000; ui_update(&in, T); T += 3000; ui_update(&in, T); CHECK(stored_cur >= 2);
     /* projects: save into a slot, change things, load it back (confirmations included) */
     ju_seq_run = 0; ju_seq_rec = 0; ju_seq_req = 0;
     ui.page = PAGE_PATCH; ui.proj_cur = -1;

@@ -36,6 +36,7 @@ enum {
     G_SEQKEYS,          /* a key while a pattern plays: 0 sounds (play along), 1 transposes the pattern and does not sound */
     G_SONG,             /* song mode: PLAY plays the song's rows (patterns chained) instead of one pattern */
     G_SONGLOOP,         /* the song starts again after its last row */
+    G_AUTOSAVE,         /* 1: the working copy is kept in flash by itself (when quiet); 0: only what is saved by hand */
     G_COUNT
 };
 

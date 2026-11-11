@@ -104,6 +104,8 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
   project is marked in red, with a `*` while the working copy differs from what was saved. Saving and loading need the sequencer
   stopped. The working copy (sounds as edited, patterns, song, settings) is also kept in flash by itself, so a power cycle brings back
   what you were doing, whatever slot is open.
+  **GLO, STORAGE page: AUT** turns this autosave off (default on). Off, nothing is written to flash by itself, so no write can
+  interrupt the sound; patterns, song and edited sounds are then kept only by saving a project (or writing a patch). The option itself is saved.
 - **PLAY** starts and stops both parts together; a part whose pattern has no note is left to the keys.
 - **Keys while it plays** (GLO, the SEQUENCER page, KEY): **PLAY** (the default) the keys sound normally over the running pattern; **TRAN** a key
   transposes the pattern instead (the key is the new root: C4 plays it as written) and does not sound. The keys play the part being edited, so
