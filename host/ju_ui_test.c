@@ -308,6 +308,17 @@ int main(void)
     cv_force = 1; cv_present(ui_draw); ui.seq_sub = 3; cv_force = 1; cv_present(ui_draw); ui.seq_sub = 0; cv_force = 1; cv_present(ui_draw);
     seq_to(0); ui.page = PAGE_QLINK;
 
+    /* About: GLO past the last performance page, GLO again to come back */
+    ui.page = PAGE_PERF; ui.focus[PAGE_PERF] = 0;
+    { int k, np; sp_tab(PAGE_PERF, &np);
+      for (k = 0; k < np - 1; k++) { in = press(B_GLO); step(&in); CHECK(ui.page == PAGE_PERF); }
+      in = press(B_GLO); step(&in); CHECK(ui.page == PAGE_ABOUT);
+      in = turn(0, 3); step(&in); in = turn(1, 3); step(&in); CHECK(ui.page == PAGE_ABOUT);       /* the knobs do nothing here */
+      cv_force = 1; cv_present(ui_draw);
+      in = press(B_GLO); step(&in); CHECK(ui.page == PAGE_PERF && ui.focus[PAGE_PERF] == 0);
+      in = press(B_GLO); step(&in); in = press(B_HOME); step(&in); CHECK(ui.page == PAGE_QLINK); }
+    ui.page = PAGE_QLINK;
+
     /* the edit tools */
     ui.page = PAGE_QLINK; ju_global[G_PANEL] = 0; ju_seq_run = 0; ju_seq_rec = 0; ju_seq_cur[0] = 0; ju_seq_cur[1] = 0; ju_seq_cursor[0] = 0;
     {

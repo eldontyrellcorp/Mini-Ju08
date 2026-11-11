@@ -14,6 +14,9 @@
  *   REC             tapped: arm recording (step entry, or real time while playing); held + a knob: that dial back to the saved value
  *   OCT- / OCT+     octave of the keys (on the PATCHES page: back / load or write) */
 
+#include "ju_version.h"
+#include "ju_qr.h"
+
 /* panel palette: black panel, cream print, the Jupiter's band of bright button colours */
 #define K_BG CV_RGB(10, 10, 12)
 #define K_PANEL CV_RGB(22, 22, 25)
@@ -30,7 +33,7 @@
 #define K_FOCUS CV_RGB(255, 196, 40)
 #define K_FOCBG CV_RGB(52, 44, 18)
 
-enum { PAGE_QLINK, PAGE_PANEL, PAGE_PERF, PAGE_FX, PAGE_PATCH, PAGE_SEQ, PAGE_PROJ, PAGE_COUNT };
+enum { PAGE_QLINK, PAGE_PANEL, PAGE_PERF, PAGE_FX, PAGE_PATCH, PAGE_SEQ, PAGE_PROJ, PAGE_ABOUT, PAGE_COUNT };
 enum { B_FX, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC, B_OCTDN, B_OCTUP, NB };
 #define BTN(b) (1u << (b))
 
@@ -878,7 +881,14 @@ static void ui_update(const ju_in_t *in, uint32_t now)
         if (ui.page == PAGE_SEQ && !ui.seq_sub) ju_seq_op = 1;                              /* the sequencer's undo: the last recorded change */
         else { if (ui.page == PAGE_PANEL) ui_jump_section(1); ui.page = PAGE_PANEL; ui.write_mode = 0; }
     }
-    if (in->press & BTN(B_GLO)) { if (ui.page == PAGE_PERF) ui_jump_section(1); ui.page = PAGE_PERF; ui.write_mode = 0; }
+    if (in->press & BTN(B_GLO)) {
+        int np;
+        sp_tab(PAGE_PERF, &np);
+        if (ui.page == PAGE_PERF && sp_locate(PAGE_PERF, ui.focus[PAGE_PERF], 0) == np - 1) ui.page = PAGE_ABOUT;      /* GLO past the last page: About */
+        else if (ui.page == PAGE_ABOUT) { ui.page = PAGE_PERF; ui.focus[PAGE_PERF] = 0; }
+        else { if (ui.page == PAGE_PERF) ui_jump_section(1); ui.page = PAGE_PERF; }
+        ui.write_mode = 0;
+    }
     if (in->press & BTN(B_FX)) { if (ui.page == PAGE_FX) ui_jump_section(1); ui.page = PAGE_FX; ui.write_mode = 0; }
     if (in->press & BTN(B_SAVE)) { ui.page = ui.page == PAGE_PATCH ? PAGE_PROJ : PAGE_PATCH; ui.write_mode = 0; ui.proj_ask = 0; }
     if (in->press & BTN(B_ENV)) ui_group_to(ui.page == PAGE_QLINK && ui.qgroup == 2 ? 3 : 2);
@@ -934,6 +944,8 @@ static void ui_update(const ju_in_t *in, uint32_t now)
         }
     } else if (ui.page == PAGE_SEQ) {
         ui_seq_input(in, now);
+    } else if (ui.page == PAGE_ABOUT) {
+        /* nothing to turn */
     } else if (ui.page == PAGE_PROJ) {
         if (in->knob[0]) { int v = ui.proj_sel + in->knob[0]; ui.proj_sel = (uint8_t)(v < 0 ? 0 : v >= JU_NPROJ ? JU_NPROJ - 1 : v); ui.proj_ask = 0; }
     } else {
@@ -1104,6 +1116,34 @@ static void d_patches(void)
     cv_text(180, 177, "WRITE", f == 64 ? K_BG : K_TEXT, 1);
 }
 
+/* ---- About: the firmware version and the QR code of the repository */
+static void d_about(void)
+{
+    const int sc = 4, q = 4 * sc, box = JU_QR_N * sc + 2 * q, bx = (CV_W - box) / 2, by = 28;
+    int r, c;
+    cv_rect(0, 22, CV_W, CV_H - 22, K_BG);
+    cv_rect(bx, by, box, box, CV_RGB(255, 255, 255));                          /* the quiet zone round the code is white too */
+    for (r = 0; r < JU_QR_N; r++) {
+        if (!cv_sees(by + q + r * sc, sc)) continue;
+        for (c = 0; c < JU_QR_N; c++) {
+            int run = 0;
+            while (c + run < JU_QR_N && (JU_QR[r][(c + run) >> 3] >> ((c + run) & 7) & 1)) run++;
+            if (run) { cv_rect(bx + q + c * sc, by + q + r * sc, run * sc, sc, CV_RGB(0, 0, 0)); c += run - 1; }
+        }
+    }
+    {
+        char b[24];
+        int w;
+        b[0] = 0; ui_strcat(b, sizeof b, "MINI-JU08  V"); ui_strcat(b, sizeof b, JU_VERSION);
+        w = cv_text_w(b, 2);
+        cv_text((CV_W - w) / 2, by + box + 5, b, K_TEXT, 2);
+        w = cv_text_w(JU_REPO_TEXT, 1);
+        cv_text((CV_W - w) / 2, by + box + 25, JU_REPO_TEXT, K_DIM, 1);
+        w = cv_text_w("GLO: BACK", 1);
+        cv_text((CV_W - w) / 2, CV_H - 10, "GLO: BACK", K_LINE, 1);
+    }
+}
+
 static void d_proj(void)
 {
     int i;
@@ -1235,6 +1275,7 @@ static void d_qlink(void)
 
 static void d_readout(void)
 {
+    if (ui.page == PAGE_ABOUT) return;
     const int y = 200;
     int id = ui_focus_param(), lay = ui_layer();
     char val[24], line[40];
@@ -1587,6 +1628,7 @@ static void ui_draw(void)
     case PAGE_FX: d_fx(); break;
     case PAGE_SEQ: d_seq(); break;
     case PAGE_PROJ: d_proj(); break;
+    case PAGE_ABOUT: d_about(); return;
     default: d_patches(); break;
     }
     d_readout();

@@ -35,7 +35,7 @@ reverb (five types and shimmer) as in the ESP32 version. See `~/jupiter8_esp32/R
 | MASTER | Volume |
 | HOME | Q-Link page; again: next group |
 | ENV / LFO / SCL | Q-Link groups: ENV-1 and ENV-2 / LFO / PLAY (the VCO group: HOME or SELECT) |
-| EDIT / GLO / FX / SAVE | EDIT: the sound controls, one section per page (LFO, VCO MOD, VCO-1, VCO-2, MIX HPF VCA, VCF, VCF 2, ENV-1, ENV-2). GLO: the performance pages (assign, key mode, arpeggio, portamento, bender, LFO mod, master, MIDI). Press EDIT or GLO again for the next page. FX: effects. SAVE: patches (again: projects) |
+| EDIT / GLO / FX / SAVE | EDIT: the sound controls, one section per page (LFO, VCO MOD, VCO-1, VCO-2, MIX HPF VCA, VCF, VCF 2, ENV-1, ENV-2). GLO: the performance pages (assign, key mode, arpeggio, portamento, bender, LFO mod, master, MIDI). Press EDIT or GLO again for the next page. GLO after the last page: **About** (firmware version 1.00 and a QR code of this repository; GLO again to leave). FX: effects. SAVE: patches (again: projects) |
 | ARP | Arpeggio on / off |
 | SEQ | The sequencer; again: its setup |
 | PLAY | Start / stop the sequencer. Held 0.6 s: all notes off |

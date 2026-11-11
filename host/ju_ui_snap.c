@@ -77,6 +77,7 @@ int main(int argc, char **argv)
     for (g = 0; g < NPANELPAGES; g++) { ui.page = PAGE_PANEL; ui.focus[PAGE_PANEL] = sp_first(PAGE_PANEL, g); snprintf(path, sizeof path, "%s/panel%d.ppm", dir, g); frame(path, 5000); }
     for (g = 0; g < NPERFPAGES; g++) { ui.page = PAGE_PERF; ui.focus[PAGE_PERF] = sp_first(PAGE_PERF, g); snprintf(path, sizeof path, "%s/perf%d.ppm", dir, g); frame(path, 5000); }
     { int i; for (i = 0; i < 5; i += 2) { ju_projinfo[i].valid = 1; strcpy(ju_projinfo[i].n0, "JUPITER PAD"); strcpy(ju_projinfo[i].n1, "DEEP SUB"); ju_projinfo[i].tempo = 80 + i; } }
+    ui.page = PAGE_ABOUT; snprintf(path, sizeof path, "%s/about.ppm", dir); frame(path, 5000);
     ui.page = PAGE_PROJ; ui.proj_sel = 2; ui.proj_cur = 2; ui.work_sig = 1; ui.proj_sig = 1; snprintf(path, sizeof path, "%s/proj.ppm", dir); frame(path, 5000);
     ui.proj_msg = "OCT+ AGAIN: OVERWRITE THIS SLOT"; ui.proj_msg_at = 4000; ui.work_sig = 2; snprintf(path, sizeof path, "%s/proj2.ppm", dir); frame(path, 5000); ui.proj_msg = 0;
     ui.page = PAGE_PANEL; ui_focus_on(PAGE_PANEL, P_VCF_CUT); snprintf(path, sizeof path, "%s/panel.ppm", dir); frame(path, 5000);
