@@ -42,7 +42,7 @@ static void um_byte(uint32_t b)
     }
     if (b & 0x80u) {
         um.sysex = b == 0xF0u;
-        um.st = b < 0xF0u ? (uint8_t)b : 0;        /* system common/SysEx cancel running status */
+        um.st = b < 0xF0u || b == 0xF2u ? (uint8_t)b : 0;   /* system common/SysEx cancel running status (song position keeps its two bytes) */
         um.need = (uint8_t)um_len(b);
         um.got = 0;
         return;

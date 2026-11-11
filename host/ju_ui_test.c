@@ -308,6 +308,39 @@ int main(void)
     cv_force = 1; cv_present(ui_draw); ui.seq_sub = 3; cv_force = 1; cv_present(ui_draw); ui.seq_sub = 0; cv_force = 1; cv_present(ui_draw);
     seq_to(0); ui.page = PAGE_QLINK;
 
+    /* the edit tools */
+    ui.page = PAGE_QLINK; ju_global[G_PANEL] = 0; ju_seq_run = 0; ju_seq_rec = 0; ju_seq_cur[0] = 0; ju_seq_cur[1] = 0; ju_seq_cursor[0] = 0;
+    {
+        ju_pat_t *t = &ju_pat[0][0];
+        int k;
+        for (k = 0; k < JU_SEQ_STEPS; k++) { t->type[k] = SQ_REST; t->note[k] = 60; t->flags[k] = 0; t->chord[k][0] = t->chord[k][1] = 0; t->lv[k] = 0; }
+        t->len = 8; t->type[0] = SQ_NOTE; t->note[0] = 60; t->type[1] = SQ_TIE; t->type[3] = SQ_NOTE; t->note[3] = 64; t->flags[3] = SQF_MAKE(1, 1, 1); t->chord[3][0] = 7;
+        seq_to(5); CHECK(ui.seq_sub == 5);
+        in = press(B_OCTUP); step(&in);                                                      /* TL_COPY (the first tool) */
+        in = turn(0, 1); step(&in); in = press(B_OCTUP); step(&in);                           /* ... PASTE over itself: no change */
+        CHECK(ju_pat[0][0].note[3] == 64 && ju_pat[0][0].len == 8 && ju_seq_dirty[0]);
+        in = turn(0, 1); step(&in); in = press(B_OCTUP); step(&in);                           /* COPY TO NEXT: pattern 2 holds it, and is selected */
+        CHECK(ju_pat[0][1].note[3] == 64 && ju_pat[0][1].flags[3] == t->flags[3] && ju_pat[0][1].chord[3][0] == 7 && ju_seq_cur[0] == 1);
+        ju_seq_cur[0] = 0;
+        in = turn(0, 1); step(&in); in = press(B_OCTUP); step(&in);                           /* TO OTHER PART: the lower part's pattern 1 */
+        CHECK(ju_pat[1][0].note[3] == 64 && ju_pat[1][0].type[1] == SQ_TIE);
+        in = turn(0, 1); step(&in); in = turn(1, 2); step(&in); CHECK(ui.tool_amt[0] == 3);   /* TRANSPOSE by +3 */
+        in = press(B_OCTUP); step(&in);
+        CHECK(ju_pat[0][0].note[0] == 63 && ju_pat[0][0].note[3] == 67 && ju_pat[0][0].chord[3][0] == 7);
+        in = turn(0, 1); step(&in); in = turn(1, 2); step(&in); CHECK(ui.tool_amt[1] == 3);   /* SHIFT by +3 */
+        in = press(B_OCTUP); step(&in);
+        CHECK(ju_pat[0][0].type[3] == SQ_NOTE && ju_pat[0][0].note[3] == 63 && ju_pat[0][0].type[4] == SQ_TIE && ju_pat[0][0].note[6] == 67 && ju_pat[0][0].flags[6] == SQF_MAKE(1, 1, 1) && ju_pat[0][0].chord[6][0] == 7);
+        in = turn(0, 1); step(&in); in = press(B_OCTUP); step(&in); CHECK(ju_pat[0][0].len == 16 && ju_pat[0][0].note[8 + 6] == 67);   /* DOUBLE */
+        in = turn(0, 1); step(&in); in = press(B_OCTUP); step(&in); CHECK(ju_pat[0][0].len == 8);                                       /* HALVE */
+        in = turn(0, 1); step(&in); in = press(B_OCTUP); step(&in);                                                                     /* UNDO TOOL: back to before the halving */
+        CHECK(ju_pat[0][0].len == 16);
+        in = press(B_OCTUP); step(&in); CHECK(ju_pat[0][0].len == 8);                                                                    /* (again: redo) */
+        in = turn(0, -9); step(&in); in = turn(0, 1); step(&in); in = press(B_OCTUP); step(&in);                                        /* PASTE after other edits: the copy */
+        CHECK(ju_pat[0][0].note[3] == 64 && ju_pat[0][0].len == 8 && ju_pat[0][0].type[3] == SQ_NOTE);
+        cv_force = 1; cv_present(ui_draw);
+        seq_to(0); ui.page = PAGE_QLINK;
+    }
+
     /* autosave off: nothing is written by itself, but the option is; back on, the pending save happens */
     ui.page = PAGE_PERF; stored_cur = 0; memset(&in, 0, sizeof in);
     ju_global[G_AUTOSAVE] = 0; T += 3000; ui_update(&in, T); T += 3000; ui_update(&in, T); CHECK(stored_cur == 1);     /* the option itself */

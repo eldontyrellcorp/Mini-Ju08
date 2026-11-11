@@ -70,7 +70,7 @@ static const spage_t kPerfPages[] = {
     {"BENDER", K_BLUE, 5, {PG(G_BEND_VCO), PG(G_BEND_V1), PG(G_BEND_V2), PG(G_BEND_VCF), PG(G_BEND_VCFSW)}},
     {"LFO MOD", K_RED, 5, {PG(G_MOD_RISE), PG(G_MOD_VCO), PG(G_MOD_VCOSW), PG(G_MOD_VCF), PG(G_MOD_VCFSW)}},
     {"MASTER", K_ORANGE, 4, {PG(G_VOLUME), PG(G_BAL_U), PG(G_BAL_L), PG(G_TUNE)}},
-    {"MIDI", K_YELLOW, 2, {PG(G_CH_U), PG(G_CH_L)}},
+    {"MIDI", K_YELLOW, 3, {PG(G_CH_U), PG(G_CH_L), PG(G_MOUT)}},
     {"SEQUENCER", K_ORANGE, 6, {PG(G_SYNC), PG(G_TEMPO), PG(G_SEQKEYS), PG(G_SONG), PG(G_SONGLOOP), PG(G_SWING)}},
     {"RECORDING", K_YELLOW, 4, {PG(G_METRO), PG(G_COUNTIN), PG(G_CLICKVOL), PG(G_QUANT)}},
     {"STORAGE", K_BLUE, 1, {PG(G_AUTOSAVE)}},
@@ -201,7 +201,8 @@ typedef struct {
     int turning_enc;
     uint8_t overview;
     uint8_t cpu;                        /* percent, for the header */
-    uint8_t seq_sub;                    /* the SEQ page: 0 the roll, 1 the setup, 2 the song, 3 the step's velocity / probability / ratchet, 4 its chord and lane */
+    uint8_t seq_sub;                    /* the SEQ page: 0 the roll, 1 the setup, 2 the song, 3 the step's velocity / probability / ratchet, 4 its chord and lane, 5 the edit tools */
+    uint8_t tool_sel; int8_t tool_amt[2];  /* the tools page: the tool under the cursor; the amounts of TRANSPOSE and SHIFT */
     uint8_t rec_used, panic_done;       /* REC was used as a modifier; PLAY held long enough for all notes off */
     uint32_t play_down_at, seq_save_at, clear_at;
     uint8_t seq_lo;                     /* the lowest note the piano roll shows (it follows the cursor) */
@@ -214,7 +215,7 @@ typedef struct {
     uint32_t proj_sig, work_sig, sig_at, proj_msg_at;   /* signature of the open project as saved; of the working copy; when taken; when the message was set */
     const char *proj_msg;               /* what the last save / load did, shown for a few seconds */
 } ui_t;
-static ui_t ui = {.page = PAGE_QLINK, .patch_idx = {8, 0}, .song_cur = 0, .last_dial = -1, .overview = 1, .proj_cur = -1, .auto_seen = 2};
+static ui_t ui = {.tool_amt = {1, 1}, .page = PAGE_QLINK, .patch_idx = {8, 0}, .song_cur = 0, .last_dial = -1, .overview = 1, .proj_cur = -1, .auto_seen = 2};
 
 static void ui_focus_on(int page, int id)
 {
@@ -547,7 +548,7 @@ static void ui_group_to(int g)                         /* the Q-Link page on a g
  * (setup: 1 the pattern's length, 2 the gate, 3 the tempo, 4 the pattern). A note is a NOTE step followed by the TIE steps it lasts
  * through; the length knob adds and takes away ties (up to the next note), and 0 deletes the note. */
 #define ROLL_ROWS 22                                        /* semitones the roll shows */
-static const uint8_t kSeqNext[5] = {3, 2, 0, 4, 1};     /* SEQ again: the roll, the step page, the chord page, the setup, the song, the roll */
+static const uint8_t kSeqNext[6] = {3, 2, 5, 4, 1, 0};     /* SEQ again: the roll, the step page, the chord page, the setup, the song, the tools, the roll */
 static ju_pat_t *ui_pat(void) { return &ju_pat[ui_layer()][ju_seq_cur[ui_layer()] % JU_SEQ_PATS]; }
 static int seq_head(const ju_pat_t *t, int i)               /* the NOTE step a step belongs to (itself, or the one its ties hang on), -1 if none */
 {
@@ -643,6 +644,80 @@ static void ui_song_input(const ju_in_t *in, uint32_t now)
     }
 }
 
+/* ---- the edit tools (the last SEQ page): whole-pattern operations. KNOB 1 picks the tool, KNOB 2 sets the amount of TRANSPOSE and SHIFT, OCT+ does it.
+ * The last tool's effect can be taken back (UNDO TOOL). They work on the pattern being edited, in the part being edited. */
+enum { TL_COPY, TL_PASTE, TL_NEXT, TL_OTHER, TL_TRANSPOSE, TL_SHIFT, TL_DOUBLE, TL_HALVE, TL_UNDO, TL_COUNT };
+static const char *const kTools[TL_COUNT] = {"COPY", "PASTE", "COPY TO NEXT", "TO OTHER PART", "TRANSPOSE", "SHIFT", "DOUBLE", "HALVE", "UNDO TOOL"};
+static ju_pat_t ui_clip, ui_tool_undo;
+static uint8_t ui_clip_ok, ui_undo_ok, ui_undo_part, ui_undo_pat;
+static void ui_tool_msg(const char *m) { ui.proj_msg = m; ui.proj_msg_at = ui.now ? ui.now : 1u; }
+static void ui_tool_remember(int part, int idx)          /* before a tool changes a pattern */
+{
+    ui_tool_undo = ju_pat[part][idx]; ui_undo_part = (uint8_t)part; ui_undo_pat = (uint8_t)idx; ui_undo_ok = 1;
+}
+static void ui_tool_apply(void)
+{
+    int p = ui_layer(), idx = ju_seq_cur[p] % JU_SEQ_PATS, i, n, len;
+    ju_pat_t *t = &ju_pat[p][idx], tmp;
+    len = t->len >= 1 && t->len <= JU_SEQ_STEPS ? t->len : 16;
+    switch (ui.tool_sel) {
+    case TL_COPY: ui_clip = *t; ui_clip_ok = 1; ui_tool_msg("COPIED"); return;
+    case TL_PASTE:
+        if (!ui_clip_ok) { ui_tool_msg("NOTHING COPIED YET"); return; }
+        ui_tool_remember(p, idx); *t = ui_clip; ju_seq_dirty[p] = 1; ui_tool_msg("PASTED"); return;
+    case TL_NEXT:                                        /* the pattern into the next one, and on to it: to build a variation */
+        ui_tool_remember(p, (idx + 1) % JU_SEQ_PATS);
+        ju_pat[p][(idx + 1) % JU_SEQ_PATS] = *t; ju_seq_cur[p] = (uint8_t)((idx + 1) % JU_SEQ_PATS); ju_seq_cursor[p] = 0;
+        ju_seq_dirty[p] = 1; ui.save_at = ui.now + 2000u; ui_tool_msg("COPIED TO THE NEXT PATTERN"); return;
+    case TL_OTHER:
+        ui_tool_remember(1 - p, idx);
+        ju_pat[1 - p][idx] = *t; ju_seq_dirty[1 - p] = 1; ui_tool_msg(p ? "COPIED TO THE UPPER PART" : "COPIED TO THE LOWER PART"); return;
+    case TL_UNDO:
+        if (!ui_undo_ok) { ui_tool_msg("NOTHING TO UNDO"); return; }
+        tmp = ju_pat[ui_undo_part][ui_undo_pat]; ju_pat[ui_undo_part][ui_undo_pat] = ui_tool_undo; ui_tool_undo = tmp;      /* (undo again: redo) */
+        ju_seq_dirty[ui_undo_part] = 1; ui_tool_msg("UNDONE"); return;
+    default: break;
+    }
+    ui_tool_remember(p, idx);
+    if (ui.tool_sel == TL_TRANSPOSE) {
+        for (i = 0; i < JU_SEQ_STEPS; i++) { n = (int)t->note[i] + ui.tool_amt[0]; t->note[i] = (uint8_t)(n < 0 ? 0 : n > 127 ? 127 : n); }
+        ui_tool_msg("TRANSPOSED");
+    } else if (ui.tool_sel == TL_SHIFT) {
+        int sh = ((ui.tool_amt[1] % len) + len) % len;
+        tmp = *t;
+        for (i = 0; i < len; i++) {
+            int d = (i + sh) % len;
+            t->note[d] = tmp.note[i]; t->type[d] = tmp.type[i]; t->flags[d] = tmp.flags[i]; t->chord[d][0] = tmp.chord[i][0]; t->chord[d][1] = tmp.chord[i][1]; t->lv[d] = tmp.lv[i];
+        }
+        ju_seq_cursor[p] = (uint8_t)((ju_seq_cursor[p] + sh) % len);
+        ui_tool_msg("SHIFTED");
+    } else if (ui.tool_sel == TL_DOUBLE) {
+        if (len * 2 > JU_SEQ_STEPS) { ui_tool_msg("ALREADY AT 64 STEPS"); return; }
+        for (i = 0; i < len; i++) {
+            t->note[len + i] = t->note[i]; t->type[len + i] = t->type[i]; t->flags[len + i] = t->flags[i];
+            t->chord[len + i][0] = t->chord[i][0]; t->chord[len + i][1] = t->chord[i][1]; t->lv[len + i] = t->lv[i];
+        }
+        t->len = (uint8_t)(len * 2); ui_tool_msg("DOUBLED");
+    } else if (ui.tool_sel == TL_HALVE) {
+        if (len < 2) { ui_tool_msg("ALREADY ONE STEP"); return; }
+        t->len = (uint8_t)(len / 2);
+        if (ju_seq_cursor[p] >= t->len) ju_seq_cursor[p] = (uint8_t)(t->len - 1);
+        ui_tool_msg("HALVED");
+    }
+    ju_seq_dirty[p] = 1;
+}
+static void ui_tools_input(const ju_in_t *in)
+{
+    int d;
+    ui.turning_enc = 1;
+    if (in->knob[0]) { d = ui.tool_sel + in->knob[0]; ui.tool_sel = (uint8_t)(d < 0 ? 0 : d >= TL_COUNT ? TL_COUNT - 1 : d); }
+    if (in->knob[1]) {
+        if (ui.tool_sel == TL_TRANSPOSE) { d = ui.tool_amt[0] + in->knob[1]; ui.tool_amt[0] = (int8_t)(d < -24 ? -24 : d > 24 ? 24 : d); }
+        else if (ui.tool_sel == TL_SHIFT) { d = ui.tool_amt[1] + in->knob[1]; ui.tool_amt[1] = (int8_t)(d < -32 ? -32 : d > 32 ? 32 : d); }
+    }
+    if (in->press & BTN(B_OCTUP)) ui_tool_apply();
+}
+
 /* ---- the step pages (SEQ again after the roll). Page 3: KNOB 2 the velocity, 3 the probability, 4 the ratchet of the step under the cursor.
  * Page 4: KNOB 2 the chord, 3 the lane's parameter (the pattern's), 4 the lane's value at this step. KNOB 1 moves the cursor on both. */
 typedef struct { const char *name; uint8_t o[3]; } chord_t;
@@ -701,6 +776,7 @@ static void ui_seq_input(const ju_in_t *in, uint32_t now)
     uint8_t *cur = &ju_seq_cursor[p];
     ui.turning_enc = 1;
     if (ui.seq_sub == 2) { ui_song_input(in, now); return; }
+    if (ui.seq_sub == 5) { ui_tools_input(in); return; }
     if (!t->len) t->len = 16;
     if (*cur >= t->len) *cur = (uint8_t)(t->len - 1);
     if (ui.seq_sub >= 3) {
@@ -807,7 +883,7 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     if (in->press & BTN(B_SAVE)) { ui.page = ui.page == PAGE_PATCH ? PAGE_PROJ : PAGE_PATCH; ui.write_mode = 0; ui.proj_ask = 0; }
     if (in->press & BTN(B_ENV)) ui_group_to(ui.page == PAGE_QLINK && ui.qgroup == 2 ? 3 : 2);
     if (in->press & BTN(B_LFO)) ui_group_to(5);
-    if (in->press & BTN(B_SEQ)) { if (ui.page == PAGE_SEQ) ui.seq_sub = kSeqNext[ui.seq_sub % 5]; else { ui.page = PAGE_SEQ; ui.seq_sub = 0; } ui.write_mode = 0; }
+    if (in->press & BTN(B_SEQ)) { if (ui.page == PAGE_SEQ) ui.seq_sub = kSeqNext[ui.seq_sub % 6]; else { ui.page = PAGE_SEQ; ui.seq_sub = 0; } ui.write_mode = 0; }
     if ((in->press & BTN(B_SCL)) && ui.page == PAGE_PROJ) ui_proj_do(3);
     else if ((in->press & BTN(B_SCL)) && ui.page != PAGE_SEQ) ui_group_to(7);          /* (on the SEQ page SCL clears a step) */
     if (in->press & BTN(B_ARP)) { ju_global[G_ARP_ON] ^= 1; ui.save_at = now + 2000u; }
@@ -831,6 +907,8 @@ static void ui_update(const ju_in_t *in, uint32_t now)
             if (ui.clear_at && now - ui.clear_at < 2000u) { ui_seq_clear(); ui.clear_at = 0; } else ui.clear_at = now ? now : 1u;
         }
         if (ui.clear_at && now - ui.clear_at >= 2000u) ui.clear_at = 0;
+    } else if (ui.page == PAGE_SEQ && ui.seq_sub >= 3) {
+        /* the step pages and the tools: OCT+ is the tools' (handled with their knobs), OCT- does nothing here */
     } else if (ui.page == PAGE_PROJ) {
         if (in->press & BTN(B_OCTUP)) ui_proj_do(1);                          /* save into the slot */
         if (in->press & BTN(B_OCTDN)) ui_proj_do(2);                          /* load the slot */
@@ -1215,6 +1293,13 @@ static void d_readout(void)
             cv_text(6, y + 30, ju_global[G_SONG] ? "SEQ AGAIN: THE ROLL" : "SONG IS OFF: OCT- TURNS IT ON", ju_global[G_SONG] ? K_DIM : K_RED, 1);
             return;
         }
+        if (ui.seq_sub == 5) {
+            int msg = ui.proj_msg && ui.proj_msg_at && ui.now - ui.proj_msg_at < 3000u;
+            cv_text(6, y + 6, msg ? ui.proj_msg : "OCT+ DOES THE TOOL UNDER THE CURSOR", msg ? K_RED : K_DIM, 1);
+            cv_text(6, y + 18, "KNOB 1 TOOL  KNOB 2 AMOUNT", K_DIM, 1);
+            cv_text(6, y + 30, "SEQ AGAIN: THE ROLL", K_DIM, 1);
+            return;
+        }
         if (ui.seq_sub >= 3) {
             cv_text(6, y + 6, ui.seq_sub == 3 ? "2 VELOCITY  3 PROBABILITY  4 RATCHET" : "2 CHORD  3 LANE  4 LANE VALUE", K_DIM, 1);
             cv_text(6, y + 18, ui.seq_sub == 3 ? "1 MOVES THE STEP  SCL ERASES IT" : "REC + KEYS HELD TOGETHER: A CHORD", K_DIM, 1);
@@ -1381,6 +1466,29 @@ static void d_song(void)
     }
 }
 
+static void d_tools(int p, uint16_t col)
+{
+    int i;
+    char b[16];
+    cv_rect(0, 24, CV_W, 20, col);
+    cv_text(6, 27, "TOOLS", K_BG, 2);
+    cv_text(CV_W - 6 - cv_text_w(p ? "LOWER" : "UPPER", 1), 31, p ? "LOWER" : "UPPER", K_BG, 1);
+    for (i = 0; i < TL_COUNT; i++) {
+        int y = 46 + i * 17, foc = i == ui.tool_sel;
+        if (!cv_sees(y - 1, 18)) continue;
+        cv_rect(0, y, CV_W, 16, foc ? K_FOCBG : K_PANEL);
+        if (foc) cv_frame(0, y, CV_W, 16, K_FOCUS);
+        cv_text(8, y + 1, kTools[i], foc ? K_FOCUS : K_TEXT, 2);
+        b[0] = 0;
+        if (i == TL_TRANSPOSE || i == TL_SHIFT) {
+            int a = ui.tool_amt[i == TL_SHIFT];
+            ui_strcat(b, sizeof b, a > 0 ? "+" : ""); ui_num(b, sizeof b, a); ui_strcat(b, sizeof b, i == TL_SHIFT ? " STEPS" : " ST");
+        } else if (i == TL_PASTE) ui_strcat(b, sizeof b, ui_clip_ok ? "READY" : "EMPTY");
+        else if (i == TL_UNDO) ui_strcat(b, sizeof b, ui_undo_ok ? "READY" : "NONE");
+        if (b[0]) cv_text(CV_W - 8 - cv_text_w(b, 1), y + 5, b, foc ? K_FOCUS : K_DIM, 1);
+    }
+}
+
 static void d_step_cards(int p, const ju_pat_t *t, int len, int cur, int h, uint16_t col)
 {
     static const char *const velname[4] = {"NORMAL", "ACCENT", "SOFT", "GHOST"};
@@ -1429,6 +1537,7 @@ static void d_seq(void)
     uint16_t col = p ? K_BLUE : K_ORANGE;
     if (ui.seq_sub == 2) { d_song(); return; }
     cv_rect(0, 24, CV_W, 34, K_BG);
+    if (ui.seq_sub == 5) { d_tools(p, col); return; }
     if (ui.seq_sub >= 3) { d_step_cards(p, t, len, cur, h, col); return; }
     if (ui.seq_sub) {                                       /* the setup: four big values, as Sloop shows its settings */
         static const char *const nm[4] = {"LENGTH", "GATE", "TEMPO", "PATTERN"};

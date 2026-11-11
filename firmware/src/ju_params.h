@@ -37,6 +37,7 @@ enum {
     G_SONG,             /* song mode: PLAY plays the song's rows (patterns chained) instead of one pattern */
     G_SONGLOOP,         /* the song starts again after its last row */
     G_SWING,            /* every second sixteenth is late by this many clock ticks (0-3 of 6: 50, 58, 67, 75 %) */
+    G_MOUT,             /* the sequencer's MIDI out (USB): 0 off, 1 notes, 2 notes and clock (start, stop, 24 a quarter) */
     G_AUTOSAVE,         /* 1: the working copy is kept in flash by itself (when quiet); 0: only what is saved by hand */
     G_COUNT
 };

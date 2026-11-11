@@ -66,13 +66,16 @@ static void ju_midi_event(uint32_t st, uint32_t ch, uint32_t d1, uint32_t d2)
     }
 }
 
+static void ju_mout_fw(uint32_t pkt) { midi_out_event(pkt); }       /* the sequencer's MIDI out: the USB queue (the TRS port has no transmit driver) */
+
 static void ju_midi_drain(void)
 {
     while (mi_r != mi_w) {
         uint32_t at = mi_r % MQ, pkt = midi_in_q[at], status = (pkt >> 8) & 0xFFu;
         uint32_t d1 = (pkt >> 16) & 0x7Fu, d2 = (pkt >> 24) & 0x7Fu;
         mi_r++;
-        if (status >= 0xF8u) { ju_seq_midi((uint8_t)status); continue; }     /* clock, start, continue, stop: the sequencer (MIDI clock selected) */
+        if (status >= 0xF8u) { ju_seq_midi((uint8_t)status); continue; }
+        if (status == 0xF2u) { ju_seq_spp((int)(d1 | d2 << 7)); continue; }              /* song position pointer */     /* clock, start, continue, stop: the sequencer (MIDI clock selected) */
         ju_midi_event(status & 0xF0u, status & 0x0Fu, d1, d2);
     }
     if (midi_in_overflow) {                           /* a broken stream: release everything and start again */

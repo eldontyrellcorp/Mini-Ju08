@@ -99,6 +99,7 @@ int main(int argc, char **argv)
         ui.seq_sub = 0; snprintf(path, sizeof path, "%s/seq4.ppm", dir); frame(path, 5000);
         ui.seq_sub = 3; snprintf(path, sizeof path, "%s/seq5.ppm", dir); frame(path, 5000);
         ui.seq_sub = 4; snprintf(path, sizeof path, "%s/seq6.ppm", dir); frame(path, 5000);
+        ui.seq_sub = 5; ui.tool_sel = 4; ui.tool_amt[0] = 3; snprintf(path, sizeof path, "%s/seq7.ppm", dir); frame(path, 5000);
         ui.seq_sub = 0; ui.page = PAGE_QLINK;
     }
     {   /* the song page */

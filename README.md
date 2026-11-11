@@ -111,6 +111,16 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
     was, and comes back when the sequencer stops); a step without one leaves the sound's own value. KNOB 4 starts a value at the sound's own value.
   - **Swing** (GLO, SEQUENCER page: SWG): every second sixteenth is late by 1, 2 or 3 of its 6 clock ticks (58, 67, 75 %).
   - The velocity of keys is not recorded (the keys have none): set it per step. MIDI velocity is ignored by the sound, as on the Jupiter-8.
+- **Tools** (the last page of the SEQ cycle): whole-pattern operations on the pattern being edited. KNOB 1 picks the tool, KNOB 2 sets the
+  amount of TRANSPOSE (semitones) and SHIFT (steps, wrapping), **OCT+** does it. COPY and PASTE (one clipboard, any pattern of either part),
+  COPY TO NEXT (the pattern goes into the next slot, which becomes the current one, to make a variation), TO OTHER PART (the same slot of the
+  other part), TRANSPOSE, SHIFT, DOUBLE (the pattern repeated to twice its length, up to 64), HALVE, and UNDO TOOL (takes back the last
+  tool; again: redoes it).
+- **MIDI out** (GLO, MIDI page: MOU): the sequencer's notes go out on USB MIDI, on each part's channel (OMNI: 1 for Upper, 2 for Lower), with
+  the step's velocity (ghost 36, soft 64, normal 100, accent 127) and every note of a chord. **N+CLK** also sends the clock (24 a quarter note),
+  start and stop, when the internal clock is selected. The 5-pin TRS port has no transmit driver in this firmware: it is MIDI in only.
+  **Song position pointer** is followed with the MIDI clock selected: a DAW that jumps (then continues) makes the pattern play from that
+  sixteenth. (In song mode the song plays from its own row.)
 - **Projects** (SAVE twice: the Patches page, then the Projects page): 8 numbered slots P01-P08. A project is the two sounds (with their
   effects), all 32 patterns, the song, and the musical settings (tempo, key mode and split, balance, arpeggio, portamento, the two MIDI
   channels, song mode and loop). Nothing is saved until you ask: KNOB 1 picks the slot, **OCT+** saves into it (asks again before

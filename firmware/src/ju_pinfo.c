@@ -36,6 +36,7 @@ static const char *const kMetro[] = {"OFF", "REC", "PLAY"};
 static const char *const kQuant[] = {"1/16", "1/8", "1/4", "1/2"};
 static const char *const kSeqKeys[] = {"PLAY", "TRAN"};
 static const char *const kOffOn2[] = {"OFF", "ON"};
+static const char *const kMOut[] = {"OFF", "NOTES", "N+CLK"};
 static const char *const kSwing[] = {"OFF", "58%", "67%", "75%"};
 static const char *const kCount[] = {"OFF", "1", "2", "3", "4", "5", "6", "7", "8"};
 #define SEL(arr) (uint8_t)(sizeof(arr) / sizeof(arr[0])), arr
@@ -119,6 +120,7 @@ static const ju_pinfo_t kInfo[P_COUNT + G_COUNT] = {
     {"SNG", "SONG MODE", SEL(kOffOn2), 0},
     {"LUP", "SONG LOOP", SEL(kOffOn2), 0},
     {"SWG", "SWING", SEL(kSwing), 0},
+    {"MOU", "SEQUENCER MIDI OUT", SEL(kMOut), 0},
     {"AUT", "AUTOSAVE", SEL(kOffOn2), 1},
 };
 

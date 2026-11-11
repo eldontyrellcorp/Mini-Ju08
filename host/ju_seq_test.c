@@ -427,6 +427,45 @@ int main(void)
     CHECK(ju_pat[0][0].type[1] == SQ_REST);
     ju_seq_rec = 0;
 
+    /* 20. MIDI out: notes on the part's channel with the step's velocity, then clock, start and stop */
+    {
+        static uint32_t out[8192]; static int nout;
+        void cap(uint32_t p) { if (nout < 8192) out[nout++] = p; }
+        int on60 = 0, off60 = 0, clk = 0, st = 0, sp = 0, vel = 0, chan = -1;
+        setup(); ju_midi_out_hook = cap; nout = 0;
+        ju_global[G_MOUT] = 1; ju_global[G_CH_U] = 5;                                          /* notes only, upper on channel 5 */
+        { int n[2] = {60, 0}; pat(0, 2, 3, n, "NR"); }
+        ju_pat[0][0].flags[0] = SQF_MAKE(1, 0, 0); ju_pat[0][0].chord[0][0] = 7;
+        ju_seq_req = 1; for (int i = 0; i < 2 * 172 + 20; i++) block(); ju_seq_req = 2; block();
+        for (int i = 0; i < nout; i++) {
+            uint32_t st8 = out[i] >> 8 & 255, d1 = out[i] >> 16 & 255, d2 = out[i] >> 24;
+            if (st8 == (0x90u | 4u) && d1 == 60) { on60++; vel = (int)d2; chan = 4; }
+            if (st8 == (0x80u | 4u) && d1 == 60) off60++;
+            clk += st8 == 0xF8; st += st8 == 0xFA; sp += st8 == 0xFC;
+        }
+        CHECK(on60 == 2 && off60 == 2 && vel == 127 && chan == 4 && clk == 0 && st == 0);       /* accent = 127; no clock with notes only */
+        { int on67 = 0; for (int i = 0; i < nout; i++) on67 += (out[i] >> 8 & 255) == 0x94 && (out[i] >> 16 & 255) == 67; CHECK(on67 == 2); }   /* the chord's fifth went out too */
+        setup(); ju_midi_out_hook = cap; nout = 0; ju_global[G_MOUT] = 2;
+        { int n[2] = {60, 0}; pat(0, 2, 3, n, "NR"); }
+        ju_seq_req = 1; for (int i = 0; i < 2 * 172; i++) block(); ju_seq_req = 2; block();     /* 250 ms: 12 clocks (a second would be 48) */
+        clk = st = sp = 0;
+        for (int i = 0; i < nout; i++) { uint32_t st8 = out[i] >> 8 & 255; clk += st8 == 0xF8; st += st8 == 0xFA; sp += st8 == 0xFC; }
+        CHECK(st == 1 && sp == 1 && clk >= 11 && clk <= 13);                                   /* 250 ms at 120 BPM: 12 clocks */
+        ju_global[G_MOUT] = 1; setup(); ju_midi_out_hook = cap; nout = 0; ju_global[G_MOUT] = 1;
+        { int n[1] = {60}; pat(0, 1, 6, n, "N"); } ju_seq_req = 1; block(); block();
+        ju_global[G_MOUT] = 0; ju_seq_req = 2; block();                                         /* switched off while a note sounds: its note-off still goes */
+        { int offs = 0; for (int i = 0; i < nout; i++) offs += (out[i] >> 8 & 255) == 0x80 && (out[i] >> 16 & 255) == 60; CHECK(offs == 1); }
+        ju_midi_out_hook = 0;
+    }
+
+    /* 21. song position pointer (MIDI clock): the next clock plays the step it names */
+    setup(); ju_global[G_SYNC] = 1;
+    { int n[8] = {60, 61, 62, 63, 64, 65, 66, 67}; pat(0, 8, 3, n, "NNNNNNNN"); }
+    ju_seq_midi(0xFA); ju_seq_midi(0xFC);                                                       /* a start and a stop, to be stopped at a known state */
+    ju_seq_spp(13); ju_seq_midi(0xFB); ju_seq_midi(0xF8); block();                              /* 13 mod 8 = 5: note 65 */
+    CHECK(count(65, 1, 0) == 1 && count(60, 1, 0) == 0);
+    ju_seq_midi(0xFC); block();
+
     printf("sequencer: %s\n", fails ? "FAILED" : "all checks passed");
     return fails ? 1 : 0;
 }

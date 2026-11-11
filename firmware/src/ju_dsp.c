@@ -517,6 +517,11 @@ uint8_t ju_seq_cursor[2];                            /* the step the panel edits
 static int8_t ju_seq_trans[2];
 static int16_t ju_seq_snd[2][4];                     /* the notes the sequencer holds (after transposition): a chord of up to four */
 static uint8_t ju_seq_ns[2];                         /* how many */
+static uint8_t ju_seq_sent[2];                       /* their note-ons went out on MIDI, so their note-offs must */
+/* MIDI out: USB-MIDI packets (cable 0) to the host. The firmware sets the hook (usb.c's queue); the host tests set their own. */
+void (*ju_midi_out_hook)(uint32_t pkt);
+static void ju_mout(uint32_t pkt) { if (ju_midi_out_hook) ju_midi_out_hook(pkt); }
+static int ju_mout_ch(int p) { int c = ju_global[p ? G_CH_L : G_CH_U]; return c ? c - 1 : p; }     /* the part's channel; OMNI: 1 for Upper, 2 for Lower */
 static uint8_t ju_seq_rat[2];                        /* ticks of the step still to repeat the notes (a ratchet): bit n = tick n */
 static uint8_t ju_seq_sw_pend;                       /* ticks until a swung step plays */
 static uint32_t ju_seq_stepn;                        /* steps since the start (swing delays the even ones) */
@@ -528,7 +533,15 @@ static volatile uint8_t ju_seq_ext_ticks;            /* MIDI clock pulses waitin
 static int16_t ju_seq_rec_key[2] = {-1, -1};         /* the key being recorded (real time), -1 none */
 static int16_t ju_seq_rec_step[2] = {-1, -1};
 
-static void ju_seq_forget(void) { ju_seq_ns[0] = ju_seq_ns[1] = 0; ju_seq_rat[0] = ju_seq_rat[1] = 0; }      /* every voice was released: nothing to release later */
+static void ju_seq_forget(void)
+{
+    int p, i;
+    for (p = 0; p < 2; p++) {
+        if (ju_seq_sent[p]) for (i = 0; i < ju_seq_ns[p]; i++) ju_mout(0x08u | (uint32_t)(0x80 | ju_mout_ch(p)) << 8 | (uint32_t)ju_seq_snd[p][i] << 16);
+        ju_seq_sent[p] = 0;
+    }
+    ju_seq_ns[0] = ju_seq_ns[1] = 0; ju_seq_rat[0] = ju_seq_rat[1] = 0;
+}      /* every voice was released: nothing to release later */
 ju_song_t ju_song;
 volatile uint8_t ju_song_dirty;
 volatile uint8_t ju_song_row;                            /* the row playing (while a song plays) */
@@ -572,7 +585,11 @@ void ju_seq_defaults(void)
 static void ju_seq_release(int p)
 {
     int i;
-    for (i = 0; i < ju_seq_ns[p]; i++) ju_layer_key_up(p, ju_seq_snd[p][i]);
+    for (i = 0; i < ju_seq_ns[p]; i++) {
+        ju_layer_key_up(p, ju_seq_snd[p][i]);
+        if (ju_seq_sent[p]) ju_mout(0x08u | (uint32_t)(0x80 | ju_mout_ch(p)) << 8 | (uint32_t)ju_seq_snd[p][i] << 16);
+    }
+    ju_seq_sent[p] = 0;
     ju_seq_ns[p] = 0;
     ju_seq_gate_left[p] = 0;
 }
@@ -724,6 +741,7 @@ static void ju_seq_start_state(void)
     ju_seq_pp = 0;
     ju_seq_stepn = 0; ju_seq_sw_pend = 0; ju_seq_rat[0] = ju_seq_rat[1] = 0;
     ju_seq_run = 1;
+    if (!ju_global[G_SYNC] && ju_global[G_MOUT] == 2) ju_mout(0x0Fu | 0xFAu << 8);               /* start */
 }
 static void ju_seq_start(void)
 {
@@ -741,6 +759,7 @@ static void ju_seq_countin(void)                                      /* PLAY wi
 static void ju_seq_stop(void)
 {
     int p;
+    if (ju_seq_run && !ju_global[G_SYNC] && ju_global[G_MOUT] == 2) ju_mout(0x0Fu | 0xFCu << 8);    /* stop */
     ju_seq_run = 0;
     ju_seq_cnt = 0;
     ju_seq_sw_pend = 0; ju_seq_rat[0] = ju_seq_rat[1] = 0;
@@ -760,6 +779,11 @@ static void ju_seq_hit(int p, const ju_pat_t *t, int pos, int gate)       /* the
         m = m < 0 ? 0 : m > 127 ? 127 : m;
         ju_layer_key_down(p, m);
         ju_seq_snd[p][ju_seq_ns[p]++] = (int16_t)m;
+        if (ju_global[G_MOUT]) {
+            static const uint8_t mv[4] = {100, 127, 64, 36};
+            ju_mout(0x09u | (uint32_t)(0x90 | ju_mout_ch(p)) << 8 | (uint32_t)m << 16 | (uint32_t)mv[SQF_VEL(t->flags[pos])] << 24);
+            ju_seq_sent[p] = 1;
+        }
     }
     ju_vel_next[p] = 32768;
     ju_seq_gate_left[p] = (uint8_t)gate;
@@ -842,6 +866,7 @@ static void ju_seq_pulse(void)
     if (ju_global[G_METRO] == 2 || (ju_global[G_METRO] == 1 && ju_seq_rec))
         if (ju_seq_pp % 24u == 0) ju_click_trig((ju_seq_pp / 24u) % 4u == 0);
     ju_seq_pp++;
+    if (!ju_global[G_SYNC] && ju_global[G_MOUT] == 2) ju_mout(0x0Fu | 0xF8u << 8);              /* the clock, 24 a quarter note */
     ju_seq_tick();
 }
 static void ju_seq_block(void)                                       /* once per control block */
@@ -866,6 +891,20 @@ static void ju_seq_block(void)                                       /* once per
         else ju_seq_acc += JU_BLOCK * 256u;
         while (ju_seq_acc >= period) { ju_seq_acc -= period; ju_seq_pulse(); }
     }
+}
+/* song position pointer (MIDI clock selected): the step the next clock plays, in sixteenths from the start; a song is not followed (it plays from its row) */
+void ju_seq_spp(int sixteenths)
+{
+    int p;
+    if (!ju_global[G_SYNC] || ju_song_act) return;
+    for (p = 0; p < 2; p++) {
+        const ju_pat_t *t = ju_seq_pat(p);
+        int len = t->len ? t->len : 16;
+        ju_seq_release(p);
+        ju_seq_pos[p] = (uint8_t)((sixteenths + len - 1) % len);
+    }
+    ju_seq_tick6 = 0; ju_seq_sw_pend = 0;
+    ju_seq_pp = (uint32_t)sixteenths * 6u; ju_seq_stepn = (uint32_t)sixteenths;
 }
 /* MIDI realtime (0xF8 clock, 0xFA start, 0xFB continue, 0xFC stop): only with the MIDI clock selected */
 void ju_seq_midi(uint8_t st)

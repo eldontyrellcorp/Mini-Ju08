@@ -195,6 +195,7 @@ static void fm1_main(void)
     memset(cv_hash, 0xFF, sizeof cv_hash);
     felucca_dbg.boots++;
     ju_init();
+    ju_midi_out_hook = ju_mout_fw;
     ui.patch_idx[0] = 8;                                /* first start: part 1 on 21 (Jupiter Pad), part 2 on 11 (Deep Sub) */
     ui.patch_idx[1] = 0;
     ju_store_boot();
