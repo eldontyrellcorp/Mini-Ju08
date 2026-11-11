@@ -178,6 +178,10 @@ def wire():
        and ~sum(u[6:17]) & 0xFF == u[17], "response: header, address, data, checksum")
     raw = package("FM-1_906")
     ok(I.product_of(raw) == "FM-1_906" and len(I.logical_image(raw)) == len(raw) - 20, "product_of / logical_image (synthetic)")
+    body = (bytes([0, 0x59, 0x11, 0, 0, 0]) + b"FM-1_900".ljust(24, b"\0") + bytes([0x85, 0x60, 0x14])).ljust(34, b"\0")
+    pkt = bytes([0xF0]) + I.pack7(body) + bytes([0xF7])
+    idn = I.parse_identity(pkt)
+    ok(idn is not None and idn.text == "FM-1_900" and idn.version == 900, "identity: bytes after the text's NUL (a flash id) are not part of it")
 
 
 def installs():

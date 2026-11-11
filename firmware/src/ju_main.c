@@ -6,7 +6,6 @@
 struct { uint32_t magic, failed, pending; } bootguard __attribute__((section(".noinit")));
 static uint8_t flash_ok;                                /* the 1 MiB NOR answered with its id (ju_boot_flash) */
 static uint32_t flash_id;                               /* what it answered (JEDEC): 0x856014 Puya P25Q80, 0xB36014 UC25HQ80 (the newer FM-1 boards) */
-#define JU_FLASH_ID flash_id                            /* ota.c puts it into its identity reply */
 
 #include "ju_dsp.c"
 #include "ju_fxdef.c"
