@@ -5,23 +5,6 @@ A Jupiter-8 style synthesizer for the **M-VAVE FM-1**, built on the platform cod
 `jupiter8_esp32`. It keeps the FM-1's hardware layer, audio output, USB audio and USB/TRS MIDI, and replaces the sequencer,
 the tracks, the old engines and the old screens with the Jupiter-8.
 
-## Status: not yet run on a real FM-1
-
-| Checked | How |
-|---|---|
-| The voice engine against the float original, all 64 patches | `host/build.sh`: levels within 0.4 dB, waveforms 17-33 dB SNR (four pitch-sweeping patches 5-11 dB) |
-| Arpeggiator and Dual / Split stereo layers | same, 19-30 dB |
-| All 17 CHORUS & MFX types, both delay modes, five reverbs and shimmer | block by block against the float original, 14-70 dB SNR, levels within 0.2 dB |
-| The whole chain on the 56 patches that use effects | 24-32 dB SNR, levels within 0.05 dB |
-| Parameter names, ranges, defaults and every displayed value | 39,000 values compared with the original (one differs: the original's float rounding) |
-| Panel logic (every button, knob and mode) and every screen | scripted tests and PNG renders of all pages (`host/out/ui/`) |
-| The sequencer: tempo, rests, ties, gate, two lengths, transposition, MIDI clock, both recording modes | `host/ju_seq_test.c`, timing checked in milliseconds |
-| Overflow, instability, stuck voices | 500 random patches, notes, effects, controllers and sequences under UBSan |
-| The firmware builds, links and passes the project's image checks | `./build.sh` |
-
-**Not done:** running on hardware, listening tests, the CPU cost on the chip (see below), the web editor, comparison with a real Jupiter-8.
-The update entry (M-UPGRADE, Mini-Tone's `ota.c`) is in, so `tools/fm1_install.py` can update a running Mini-Ju08 over USB; it has not been tried on a device either.
-
 ## What it does
 
 Two parts of four voices each (or eight voices on one patch), 44.1 kHz. Two VCOs per voice with sync and cross mod, HPF,
