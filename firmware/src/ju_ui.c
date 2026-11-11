@@ -218,6 +218,7 @@ typedef struct {
     uint32_t proj_sig, work_sig, sig_at, proj_msg_at;   /* signature of the open project as saved; of the working copy; when taken; when the message was set */
     const char *proj_msg;               /* what the last save / load did, shown for a few seconds */
 } ui_t;
+static uint32_t ui_flash_id;                      /* the flash chip's JEDEC id (0: none answered, the storage is off); the About screen shows it */
 static ui_t ui = {.tool_amt = {1, 1}, .page = PAGE_QLINK, .patch_idx = {8, 0}, .song_cur = 0, .last_dial = -1, .overview = 1, .proj_cur = -1, .auto_seen = 2};
 
 static void ui_focus_on(int page, int id)
@@ -1143,8 +1144,16 @@ static void d_about(void)
         cv_text((CV_W - w) / 2, by + box + 5, b, K_TEXT, 2);
         w = cv_text_w(JU_REPO_TEXT, 1);
         cv_text((CV_W - w) / 2, by + box + 25, JU_REPO_TEXT, K_DIM, 1);
-        w = cv_text_w("GLO: BACK", 1);
-        cv_text((CV_W - w) / 2, CV_H - 10, "GLO: BACK", K_LINE, 1);
+        {
+            static const char hx[] = "0123456789ABCDEF";
+            char f[24];
+            int k;
+            f[0] = 0; ui_strcat(f, sizeof f, "FLASH ");
+            if (ui_flash_id) { char h[7]; for (k = 0; k < 6; k++) h[k] = hx[(ui_flash_id >> (20 - 4 * k)) & 15]; h[6] = 0; ui_strcat(f, sizeof f, h); }
+            else ui_strcat(f, sizeof f, "NONE");
+            cv_text(6, CV_H - 10, f, ui_flash_id ? K_LINE : K_RED, 1);
+            cv_text(CV_W - 6 - cv_text_w("GLO: BACK", 1), CV_H - 10, "GLO: BACK", K_LINE, 1);
+        }
     }
 }
 

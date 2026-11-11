@@ -1424,7 +1424,7 @@ static void persist_boot(void)                    /* before settings_init / pane
 #if FELUCCA_FLASH
     persist_t p;
     uint32_t f = irq_save();
-    flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;       /* the expected 1 MiB part, else stay RAM-only */
+    { uint32_t fid = FL_FAR(fl_jedec_ram)(); flash_ok = fid == 0x856014u || fid == 0xB36014u; }   /* the two 1 MiB parts (Puya P25Q80, UC25HQ80), else stay RAM-only */
     irq_restore(f);
     if (!flash_ok)
         return;

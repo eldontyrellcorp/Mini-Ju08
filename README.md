@@ -130,6 +130,14 @@ USB MIDI and TRS MIDI in. Notes, pitch bend, mod wheel (CC 1), sustain (CC 64), 
 patches 11-88, and the CC map of the ESP32 version (CC 20-56 and 59-90 for the sound, 91 / 94 / 93 for reverb send, delay send and
 CHORUS & MFX on). In 2-Part mode the channels are set on the Performance page (MIDI group: CH1, CH2, OMNI or 1-16).
 
+## Two board versions (flash chip)
+
+Some newer FM-1 units carry a different 1 MiB flash chip (UC25HQ80, JEDEC id `0xB36014`) instead of the original Puya P25Q80 (`0x856014`); both use the same
+SPI commands. A firmware that only knows the first one treats the storage as absent on the newer boards: nothing is saved (it vanishes at power-off)
+and updates over USB are refused. Mini-Ju08 accepts both chips, and its update reply carries the chip's id (as Felucca's 1.8.2 beta does). The About screen
+shows the id it found (`FLASH B36014`, or `FLASH NONE` in red: then nothing is saved). **Not tested on a newer board**: if saving fails there, the About
+screen and the "SAVE FAILED" message of the Projects page are the first things to look at. A newer board is recognisable by an M-VAVE logo under the screen.
+
 ## Demonstration video
 
 `python3 tools/make_demo.py` renders a Full HD video (about two minutes): a tour of eight patches, then a Berlin-School piece played by the sequencer

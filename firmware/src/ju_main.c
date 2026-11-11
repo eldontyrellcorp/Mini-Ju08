@@ -5,6 +5,8 @@
 #define BOOTGUARD_MAGIC 0x42475244u
 struct { uint32_t magic, failed, pending; } bootguard __attribute__((section(".noinit")));
 static uint8_t flash_ok;                                /* the 1 MiB NOR answered with its id (ju_boot_flash) */
+static uint32_t flash_id;                               /* what it answered (JEDEC): 0x856014 Puya P25Q80, 0xB36014 UC25HQ80 (the newer FM-1 boards) */
+#define JU_FLASH_ID flash_id                            /* ota.c puts it into its identity reply */
 
 #include "ju_dsp.c"
 #include "ju_fxdef.c"
@@ -87,7 +89,9 @@ static void ju_boot_flash(void)
 {
 #if FELUCCA_FLASH
     uint32_t f = irq_save();
-    flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;     /* the expected 1 MiB part, else stay RAM-only */
+    flash_id = FL_FAR(fl_jedec_ram)();
+    flash_ok = flash_id == 0x856014u || flash_id == 0xB36014u;     /* the two 1 MiB parts of the two board versions (same SPI NOR commands), else stay RAM-only */
+    ui_flash_id = flash_ok ? flash_id : 0;
     irq_restore(f);
     if (flash_ok) fl_plain_window_init();
 #endif

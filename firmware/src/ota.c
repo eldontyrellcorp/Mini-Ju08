@@ -133,6 +133,9 @@ static void ota_reply_identity(void)
     uint32_t i;
     for (i = 0; i < sizeof id; i++)
         id[i] = i < sizeof ID - 1u ? (uint8_t)ID[i] : 0;
+#ifdef JU_FLASH_ID                                  /* bytes 24-26: the flash JEDEC id, for the installers (as felucca-bsp does) */
+    id[24] = (uint8_t)(JU_FLASH_ID >> 16); id[25] = (uint8_t)(JU_FLASH_ID >> 8); id[26] = (uint8_t)JU_FLASH_ID;
+#endif
     ota_send_msg(0x11, id, sizeof id);
 }
 
