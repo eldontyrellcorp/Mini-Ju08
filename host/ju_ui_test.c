@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #include "ju_api.h"
 #include "ju_presets.h"
 #define FELUCCA_FLASH 0
@@ -21,10 +22,10 @@ static int stored_seq[2];
 static int ju_store_seq(int part) { stored_seq[part]++; return 0; }
 static int stored_song;
 static int ju_store_song(void) { stored_song++; return 0; }
-static ju_proj1_t fake1[JU_NPROJ]; static ju_proj2_t fake2[JU_NPROJ];       /* a RAM flash for the project slots */
-static int ju_proj_flash_save(int s) { ju_proj_pack(&fake1[s], &fake2[s]); ju_proj_summarize(&fake1[s], &ju_projinfo[s]); return 0; }
-static int ju_proj_flash_load(int s) { return ju_proj_unpack(&fake1[s], &fake2[s]); }
-static int ju_proj_flash_clear(int s) { memset(&fake1[s], 0, sizeof fake1[s]); ju_projinfo[s].valid = 0; return 0; }
+static uint8_t fakeb[JU_NPROJ][12000]; static int fakel[JU_NPROJ];               /* a RAM flash for the project slots */
+static int ju_proj_flash_save(int s) { int n = ju_proj_pack(fakeb[s], sizeof fakeb[s]); if (n < 0) return n; fakel[s] = n; ju_proj_summarize(fakeb[s], (uint32_t)n, &ju_projinfo[s]); return 0; }
+static int ju_proj_flash_load(int s) { return fakel[s] ? ju_proj_unpack(fakeb[s], (uint32_t)fakel[s]) : -1; }
+static int ju_proj_flash_clear(int s) { fakel[s] = 0; ju_projinfo[s].valid = 0; return 0; }
 
 static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -33,6 +34,7 @@ static void step(const ju_in_t *in) { T += 20; ui_update(in, T); }
 static ju_in_t press(int b) { ju_in_t i; memset(&i, 0, sizeof i); i.press = BTN(b); i.held = BTN(b); return i; }
 static ju_in_t release(int b) { ju_in_t i; memset(&i, 0, sizeof i); i.released = BTN(b); return i; }
 static ju_in_t turn(int k, int d) { ju_in_t i; memset(&i, 0, sizeof i); i.knob[k] = d; return i; }
+static void seq_to(int sub) { int k; for (k = 0; k < 6 && ui.seq_sub != sub; k++) { ju_in_t i = press(B_SEQ); step(&i); } }
 static void blocks(int n) { int i; for (i = 0; i < n; i++) { int32_t u[32] = {0}, l[32] = {0}; ju_prepare_block(); ju_render(u, l); } }
 
 int main(void)
@@ -137,7 +139,7 @@ int main(void)
         in = turn(3, 1); step(&in); CHECK(ju_seq_cur[0] == 1 && ju_seq_cursor[0] == 0);
         in = turn(3, -1); step(&in); in = turn(3, -1); step(&in); CHECK(ju_seq_cur[0] == 15);          /* the patterns wrap */
         ju_seq_cur[0] = 0;
-        in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 1);
+        seq_to(1); CHECK(ui.seq_sub == 1);
         ju_pat[0][0].len = 8;
         in = turn(0, 4); step(&in); CHECK(ju_pat[0][0].len > 8);
         ju_pat[0][0].len = 8;
@@ -150,7 +152,7 @@ int main(void)
         in = press(B_OCTDN); step(&in); CHECK(ju_pat[0][0].type[5] == SQ_NOTE);                      /* once: asks */
         in = press(B_OCTDN); step(&in); CHECK(ju_pat[0][0].type[5] == SQ_REST);                      /* twice: cleared */
         /* SEQ again: the song page; the knobs edit rows (KNOB 1 the row, 2 upper, 3 lower, 4 repeats) */
-        in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 2);
+        seq_to(2); CHECK(ui.seq_sub == 2);
         ju_song.n = 0; ui.song_cur = 0; ju_global[G_SONG] = 0; ju_seq_cur[0] = 3; ju_seq_cur[1] = 5; ju_song_dirty = 0;
         in = turn(1, 1); step(&in);                                                                     /* a turn on the empty row makes it a row */
         CHECK(ju_song.n == 1 && ju_song.row[0].pat[0] == 4 && ju_song.row[0].pat[1] == 5 && ju_song.row[0].rep == 1 && ju_song_dirty);
@@ -179,7 +181,7 @@ int main(void)
             memset(&in, 0, sizeof in); T += 100; ui_update(&in, T); T += 2500; ui_update(&in, T);
             CHECK(stored_song == 1 && !ju_song_dirty);
         }
-        in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 0);
+        seq_to(0); CHECK(ui.seq_sub == 0);
         ju_seq_cur[0] = ju_seq_cur[1] = 0;
         /* the other part has its own pattern */
         ju_global[G_PANEL] = 1; ju_seq_cursor[1] = 0; ju_pat[1][0].len = 16;
@@ -278,6 +280,34 @@ int main(void)
     memset(&in, 0, sizeof in); T += 3000; ui_update(&in, T);
     CHECK(stored_cur == 1 && ui.saved_global[G_VOLUME] == 150);
 
+    /* the step pages: velocity, probability, ratchet; chord, lane, lane value */
+    ui.page = PAGE_QLINK; ju_global[G_PANEL] = 0; ju_seq_cur[0] = 0; ju_seq_cursor[0] = 0; ju_seq_run = 0; ju_seq_rec = 0;
+    { ju_pat_t *t = &ju_pat[0][0]; int k; for (k = 0; k < JU_SEQ_STEPS; k++) { t->type[k] = SQ_REST; t->flags[k] = 0; t->chord[k][0] = t->chord[k][1] = 0; t->lv[k] = 0; } t->lane = 0; t->len = 8;
+      t->type[2] = SQ_NOTE; t->note[2] = 60; }
+    in = press(B_SEQ); step(&in); CHECK(ui.page == PAGE_SEQ && ui.seq_sub == 0);
+    in = turn(0, 2); step(&in); CHECK(ju_seq_cursor[0] == 2);
+    in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 3);
+    in = turn(1, 1); step(&in); CHECK(SQF_VEL(ju_pat[0][0].flags[2]) == 1);                       /* normal -> accent */
+    in = turn(1, -3); step(&in); CHECK(SQF_VEL(ju_pat[0][0].flags[2]) == 3);                      /* down to ghost */
+    in = turn(2, -2); step(&in); CHECK(SQF_PROB(ju_pat[0][0].flags[2]) == 2);                     /* 100 -> 75 -> 50 % */
+    in = turn(3, 5); step(&in); CHECK(SQF_RAT(ju_pat[0][0].flags[2]) == 3 && SQF_PROB(ju_pat[0][0].flags[2]) == 2 && SQF_VEL(ju_pat[0][0].flags[2]) == 3);
+    in = turn(0, 1); step(&in); in = turn(1, 1); step(&in); CHECK(ju_pat[0][0].flags[3] == 0);   /* a rest has none */
+    in = turn(0, -1); step(&in);
+    in = press(B_SEQ); step(&in); CHECK(ui.seq_sub == 4);
+    in = turn(1, 3); step(&in); CHECK(ju_pat[0][0].chord[2][0] == (4 | (7 << 4)) && ju_pat[0][0].chord[2][1] == 0);      /* MAJ */
+    in = turn(1, 6); step(&in); CHECK(ju_pat[0][0].chord[2][0] == (4 | (7 << 4)) && ju_pat[0][0].chord[2][1] == 11);    /* up to MAJ7 */
+    in = turn(1, -9); step(&in); CHECK(ju_pat[0][0].chord[2][0] == 0 && ju_pat[0][0].chord[2][1] == 0);
+    in = turn(3, 1); step(&in); CHECK(ju_pat[0][0].lv[2] == 0);                                  /* no lane yet: no value */
+    in = turn(2, 1); step(&in); CHECK(ju_pat[0][0].lane == 1);
+    ju_patch[0].v[P_VCF_CUT] = 255;
+    in = turn(3, 1); step(&in); CHECK(ju_pat[0][0].lv[2] == 128);                                /* starts at the sound's own value */
+    in = turn(3, -1); step(&in); CHECK(ju_pat[0][0].lv[2] < 128 && ju_pat[0][0].lv[2] > 100);
+    in = turn(3, -200); step(&in); CHECK(ju_pat[0][0].lv[2] == 0);                                /* below the bottom: none */
+    in = turn(0, 1); step(&in); in = turn(3, 1); step(&in); CHECK(ju_pat[0][0].lv[3] > 0);       /* a value on a rest step */
+    in = press(B_SCL); step(&in); blocks(1); CHECK(ju_pat[0][0].lv[3] == 0);                     /* SCL erases the step, its lane value too */
+    cv_force = 1; cv_present(ui_draw); ui.seq_sub = 3; cv_force = 1; cv_present(ui_draw); ui.seq_sub = 0; cv_force = 1; cv_present(ui_draw);
+    seq_to(0); ui.page = PAGE_QLINK;
+
     /* autosave off: nothing is written by itself, but the option is; back on, the pending save happens */
     ui.page = PAGE_PERF; stored_cur = 0; memset(&in, 0, sizeof in);
     ju_global[G_AUTOSAVE] = 0; T += 3000; ui_update(&in, T); T += 3000; ui_update(&in, T); CHECK(stored_cur == 1);     /* the option itself */
@@ -316,17 +346,63 @@ int main(void)
     in = press(B_SCL); step(&in); CHECK(!ju_projinfo[2].valid && ui.proj_cur == -1);
     ui.proj_sel = 2; in = press(B_OCTDN); step(&in); CHECK(ui.proj_msg && ui.proj_ask == 0);  /* an empty slot does not load */
     /* a damaged slot is refused whole, and what comes in is made safe */
-    memset(&fake1[4], 0, sizeof fake1[4]); ui.proj_sel = 4; { int m = ju_pat[0][0].len; in = press(B_OCTDN); step(&in); step(&in); CHECK(ju_pat[0][0].len == m); }
-    ju_proj_pack(&fake1[1], &fake2[1]);
-    fake1[1].patch[0].v[P_VCF_CUT] = 200; fake1[1].patch[0].v[P_V1_WAVE] = 99; fake1[1].patch[0].fx.mfxType = 200; fake1[1].patch[0].fx.d[DL_TIME] = 30000;
-    fake1[1].patch[0].name[11] = 'X'; fake1[1].song.n = 200; fake1[1].song.row[3].pat[0] = 77; fake1[1].song.row[3].rep = 0; fake1[1].g[11] = 99;
-    fake2[1].pat[3].len = 0; fake2[1].pat[3].note[7] = 200; fake2[1].pat[3].type[7] = 9;
-    CHECK(ju_proj_unpack(&fake1[1], &fake2[1]) == 0);
-    CHECK(ju_patch_stage[0].v[P_V1_WAVE] < ju_psteps(P_V1_WAVE) && ju_patch_stage[0].fx.mfxType < MFX_COUNT && ju_patch_stage[0].name[11] == 0);
-    CHECK(ju_patch_stage[0].fx.d[DL_TIME] <= ju_delay_param(DL_TIME)->hi && ju_song.n <= JU_SONG_ROWS && ju_song.row[3].pat[0] == JU_SONG_NONE && ju_song.row[3].rep == 1);
-    CHECK(ju_pat[1][3].len == 16 && ju_pat[1][3].note[7] <= 127 && ju_pat[1][3].type[7] <= SQ_TIE && ju_global[G_CH_U] <= 16);
-    fake1[1].magic = 0; { uint8_t t = ju_global[G_TEMPO]; ju_global[G_TEMPO] = 77; CHECK(ju_proj_unpack(&fake1[1], &fake2[1]) == -1 && ju_global[G_TEMPO] == 77); ju_global[G_TEMPO] = t; }
+    ui.proj_sel = 4; fakel[4] = 0; { int m = ju_pat[0][0].len; in = press(B_OCTDN); step(&in); step(&in); CHECK(ju_pat[0][0].len == m); }
+    {
+        static uint8_t b[12000];
+        int n = ju_proj_pack(b, sizeof b), pb = 24, o;
+        CHECK(n > 0 && ju_proj_unpack(b, (uint32_t)n) == 0);
+        CHECK(ju_proj_unpack(b, (uint32_t)n - 1) == -1 || n < 0);                                   /* cut short */
+        { uint8_t t = ju_global[G_TEMPO]; ju_global[G_TEMPO] = 77; CHECK(ju_proj_unpack(b, 30) == -1 && ju_global[G_TEMPO] == 77); ju_global[G_TEMPO] = t; }
+        b[pb + (int)offsetof(ju_patch_t, v) + P_VCF_CUT] = 200; b[pb + (int)offsetof(ju_patch_t, v) + P_V1_WAVE] = 99;
+        b[pb + (int)offsetof(ju_patch_t, fx.mfxType)] = 200; b[pb + 11] = 'X';
+        o = pb + (int)offsetof(ju_patch_t, fx.d) + 2 * DL_TIME; b[o] = 0xFF; b[o + 1] = 0x7F;
+        b[4 + 11] = 99;                                                                             /* G_CH_U (index 11 in the list) */
+        CHECK(ju_proj_unpack(b, (uint32_t)n) == 0);
+        CHECK(ju_patch_stage[0].v[P_V1_WAVE] < ju_psteps(P_V1_WAVE) && ju_patch_stage[0].fx.mfxType < MFX_COUNT && ju_patch_stage[0].name[11] == 0);
+        CHECK(ju_patch_stage[0].fx.d[DL_TIME] <= ju_delay_param(DL_TIME)->hi && ju_global[G_CH_U] <= 16);
+        b[0] = 0; CHECK(ju_proj_unpack(b, (uint32_t)n) == -1);
+    }
     blocks(1); ui.sig_pend = 0;
+
+    /* the patterns as bytes: every field of every step inside the length comes back; empty patterns are tiny; an overfull set is refused */
+    {
+        static uint8_t b[20000]; static ju_pat_t keep[2][JU_SEQ_PATS];
+        uint32_t seed = 12345; int p, k, i, n;
+        #define RND() (seed = seed * 1103515245u + 12345u, (seed >> 16) & 0x7FFF)
+        for (p = 0; p < 2; p++) for (k = 0; k < JU_SEQ_PATS; k++) {
+            ju_pat_t *t = &ju_pat[p][k];
+            t->len = (uint8_t)(1 + RND() % 64); t->gate = (uint8_t)(1 + RND() % 6); t->lane = (uint8_t)(RND() % (JU_LANE_N + 1)); t->pad = 0;
+            for (i = 0; i < JU_SEQ_STEPS; i++) {
+                int r = RND() % 4;
+                t->type[i] = (uint8_t)(r == 0 ? SQ_NOTE : r == 1 ? SQ_TIE : SQ_REST); t->note[i] = (uint8_t)(RND() % 128);
+                t->flags[i] = r == 0 ? (uint8_t)(RND() & 0x3F) : 0; t->chord[i][0] = r == 0 ? (uint8_t)RND() : 0; t->chord[i][1] = r == 0 ? (uint8_t)(RND() & 15) : 0;
+                t->lv[i] = RND() % 3 ? 0 : (uint8_t)(1 + RND() % 128);
+                if (t->type[i] == SQ_REST) t->note[i] = 60;
+            }
+        }
+        memcpy(keep, ju_pat, sizeof keep);
+        n = ju_pats_pack(b, sizeof b); CHECK(n > 0 && n < 6000);
+        memset(ju_pat, 0, sizeof ju_pat);
+        CHECK(ju_pats_unpack(b, (uint32_t)n) == 0);
+        for (p = 0; p < 2; p++) for (k = 0; k < JU_SEQ_PATS; k++) {
+            const ju_pat_t *x = &keep[p][k], *y = &ju_pat[p][k];
+            int same = x->len == y->len && x->gate == y->gate && x->lane == y->lane;
+            for (i = 0; i < x->len; i++)
+                same = same && x->type[i] == y->type[i] && x->flags[i] == y->flags[i] && x->chord[i][0] == y->chord[i][0] && x->chord[i][1] == y->chord[i][1] &&
+                       x->lv[i] == y->lv[i] && (x->type[i] == SQ_REST || x->note[i] == y->note[i]);
+            CHECK(same);
+        }
+        CHECK(ju_pats_pack(b, 100) == -2);                                                         /* does not fit */
+        CHECK(ju_pats_unpack(b, 10) == -1);                                                        /* cut short: refused */
+        for (p = 0; p < 2; p++) for (k = 0; k < JU_SEQ_PATS; k++) { memset(&ju_pat[p][k], 0, sizeof ju_pat[p][k]); ju_pat[p][k].len = 16; ju_pat[p][k].gate = 3; }
+        n = ju_pats_pack(b, sizeof b); CHECK(n == 32 * 18 + 0 || n < 700);                          /* empty patterns: 18 bytes each */
+        for (p = 0; p < 2; p++) for (k = 0; k < JU_SEQ_PATS; k++) {                                 /* the worst case: every step with everything */
+            ju_pat_t *t = &ju_pat[p][k]; t->len = 64;
+            for (i = 0; i < 64; i++) { t->type[i] = SQ_NOTE; t->flags[i] = 1; t->chord[i][0] = 0x47; t->chord[i][1] = 11; t->lv[i] = 5; }
+        }
+        n = ju_pats_pack(b, sizeof b); CHECK(n > 0 && n < 32 * (2 + 64 * 8));
+        printf("pattern bytes: empty set 32 x 18, worst case %d of 11484 a project slot holds\n", n);
+    }
 
     /* the frame is drawn the same whether it is drawn band by band or all at once (the hash of an unchanged band is stable) */
     cv_force = 1; cv_present(ui_draw);

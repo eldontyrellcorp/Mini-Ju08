@@ -9,7 +9,7 @@ static int fails;
 #define CHECK(c) do { if (!(c)) { printf("FAIL line %d: %s\n", __LINE__, #c); fails++; } } while (0)
 
 typedef struct { int blk, note, on, part; } ev_t;
-static ev_t ev[4096];
+static ev_t ev[32768];
 static int nev, blk;
 static int prev[JU_NV];                                   /* the note a voice held last block, -1 none */
 static void obs_reset(void) { nev = 0; blk = 0; for (int i = 0; i < JU_NV; i++) prev[i] = -1; }
@@ -131,6 +131,7 @@ int main(void)
     CHECK(ju_pat[0][0].type[0] == SQ_NOTE && ju_pat[0][0].type[1] == SQ_NOTE && ju_pat[0][0].type[2] == SQ_NOTE && ju_pat[0][0].type[3] == SQ_REST);
     CHECK(ju_seq_cursor[0] == 3 && ju_seq_dirty[0]);
     CHECK(count(64, 1, 0) == 1);                                                          /* it sounded */
+    ju_note_off_m(1, 64);                                                                  /* (a key pressed while another is held joins its step: a chord) */
     ju_note_on_m(1, 65); ju_note_off_m(1, 65); ju_note_on_m(1, 67);
     CHECK(ju_pat[0][0].note[3] == 65 && ju_pat[0][0].note[0] == 67 && ju_seq_cursor[0] == 1);   /* wraps at the length */
     ju_note_off_m(1, 64); ju_note_off_m(1, 67);
@@ -344,6 +345,87 @@ int main(void)
         { int found = 0; for (int i = 0; i < 2; i++) found += ju_pat[0][1].note[i] == 99; CHECK(found == 1 && ju_pat[0][0].note[0] == 60); }   /* pattern 2 got it, pattern 1 untouched */
         ju_seq_rec = 0; ju_seq_req = 2; block();
     }
+
+    /* 13. chords: the root and up to three notes above it go down together and come up together */
+    setup();
+    { int n[1] = {60}; pat(0, 1, 3, n, "N"); }
+    ju_pat[0][0].chord[0][0] = 4 | (7 << 4); ju_pat[0][0].chord[0][1] = 11;
+    ju_seq_req = 1; for (int i = 0; i < 100; i++) block();
+    CHECK(nth(60, 1, 0, 0) == nth(64, 1, 0, 0) && nth(64, 1, 0, 0) == nth(67, 1, 0, 0) && nth(67, 1, 0, 0) == nth(71, 1, 0, 0) && nth(60, 1, 0, 0) >= 0);
+    CHECK(nth(60, 0, 0, 0) == nth(71, 0, 0, 0) && nth(60, 0, 0, 0) > nth(60, 1, 0, 0));
+    { int nn[4]; ju_pat_t t = ju_pat[0][0]; CHECK(ju_chord_notes(&t, 0, nn) == 4 && nn[1] == 64 && nn[2] == 67 && nn[3] == 71); }
+    ju_seq_req = 2; block();
+
+    /* 14. probability: 25 %, 50 %, 75 % of the steps play; 100 % all of them */
+    for (int pr = 0; pr < 4; pr++) {
+        int plays;
+        setup(); ju_global[G_TEMPO] = 255;
+        { int n[1] = {60}; pat(0, 1, 1, n, "N"); }
+        ju_pat[0][0].flags[0] = SQF_MAKE(0, pr, 0);
+        ju_seq_req = 1; for (int i = 0; i < 40 * 4000; i++) block();
+        plays = count(60, 1, 0);
+        { int steps = (int)(40 * 4000 * 32.0 / 44100 / (60.0 / (295 * 4))); int want = steps * (pr == 0 ? 100 : pr == 1 ? 75 : pr == 2 ? 50 : 25) / 100;
+          CHECK(plays > want * 85 / 100 - 5 && plays < want * 115 / 100 + 5); }
+        ju_seq_req = 2; block();
+    }
+
+    /* 15. ratchet x3: three hits in a step, two ticks apart */
+    setup();
+    { int n[1] = {60}; pat(0, 1, 3, n, "N"); }
+    ju_pat[0][0].flags[0] = SQF_MAKE(0, 0, 2);
+    ju_seq_req = 1; for (int i = 0; i < 3 * 172; i++) block();
+    CHECK(count(60, 1, 0) >= 8 && near(ms(nth(60, 1, 0, 1)) - ms(nth(60, 1, 0, 0)), 41.7, 3) && near(ms(nth(60, 1, 0, 2)) - ms(nth(60, 1, 0, 1)), 41.7, 3));
+    CHECK(near(ms(nth(60, 1, 0, 3)) - ms(nth(60, 1, 0, 0)), 125, 3));                    /* the next step */
+    ju_seq_req = 2; block();
+
+    /* 16. swing: the second sixteenth of every pair is two ticks late */
+    setup(); ju_global[G_SWING] = 2;
+    { int n[2] = {60, 62}; pat(0, 2, 2, n, "NN"); }
+    ju_seq_req = 1; for (int i = 0; i < 2 * 44100 / 32; i++) block();
+    CHECK(near(ms(nth(62, 1, 0, 0)) - ms(nth(60, 1, 0, 0)), 125 + 41.7, 3));
+    CHECK(near(ms(nth(60, 1, 0, 1)) - ms(nth(62, 1, 0, 0)), 125 - 41.7, 3));
+    ju_seq_req = 2; block();
+
+    /* 17. velocity: the level follows the step's velocity (ghost < soft < normal < accent) */
+    {
+        double e[4];
+        for (int v = 0; v < 4; v++) {
+            double sum = 0;
+            setup();
+            { int n[1] = {60}; pat(0, 1, 6, n, "N"); }
+            ju_pat[0][0].flags[0] = SQF_MAKE(v, 0, 0);
+            ju_seq_req = 1;
+            for (int i = 0; i < 120; i++) { int32_t u[32] = {0}, l[32] = {0}; ju_prepare_block(); ju_render(u, l); for (int k = 0; k < 32; k++) sum += u[k] < 0 ? -(double)u[k] : u[k]; }
+            e[v] = sum; ju_seq_req = 2; block();
+        }
+        CHECK(e[3] < e[2] && e[2] < e[0] && e[0] < e[1]);
+        CHECK(e[3] > e[0] * 0.2 && e[3] < e[0] * 0.45 && e[1] > e[0] * 1.2 && e[1] < e[0] * 1.6);
+    }
+
+    /* 18. a lane: the pattern's value stands in for the sound's parameter while the block is made, and the patch is its own again after */
+    setup();
+    { int n[2] = {60, 62}; pat(0, 2, 3, n, "NN"); }
+    ju_patch[0].v[P_VCF_CUT] = 200;
+    ju_pat[0][0].lane = 1; ju_pat[0][0].lv[0] = 11;                                        /* lane 1 = cutoff; step 1 has a value, step 2 none */
+    ju_seq_req = 1; block();
+    CHECK(ju_patch[0].v[P_VCF_CUT] == 20);                                                /* (1-128 -> 0-255: 10 * 255 / 127) */
+    { int32_t u[32] = {0}, l[32] = {0}, o[64]; ju_finish(u, l, o); }
+    CHECK(ju_patch[0].v[P_VCF_CUT] == 200);
+    for (int i = 0; i < 200; i++) { block(); { int32_t u[32] = {0}, l[32] = {0}, o[64]; ju_finish(u, l, o); } CHECK(ju_patch[0].v[P_VCF_CUT] == 200); }
+    ju_seq_req = 2; block(); block();
+    CHECK(ju_patch[0].v[P_VCF_CUT] == 200);
+
+    /* 19. recording a chord: a key pressed while another recorded one is held joins its step */
+    setup();
+    ju_pat[0][0].len = 4; ju_seq_rec = 1; ju_seq_cursor[0] = 0;
+    ju_note_on_m(1, 60); ju_note_on_m(1, 64); ju_note_on_m(1, 67); block();
+    CHECK(ju_pat[0][0].note[0] == 60 && ju_pat[0][0].chord[0][0] == (4 | (7 << 4)) && ju_seq_cursor[0] == 1 && ju_pat[0][0].type[1] == SQ_REST);
+    ju_note_off_m(1, 60); ju_note_off_m(1, 64); ju_note_off_m(1, 67);
+    ju_note_on_m(1, 72); ju_note_off_m(1, 72);
+    CHECK(ju_pat[0][0].note[1] == 72 && ju_pat[0][0].chord[1][0] == 0);                    /* the next key on its own: the next step */
+    ju_seq_op = 1; block();                                                                /* undo: the step goes back to what it was */
+    CHECK(ju_pat[0][0].type[1] == SQ_REST);
+    ju_seq_rec = 0;
 
     printf("sequencer: %s\n", fails ? "FAILED" : "all checks passed");
     return fails ? 1 : 0;

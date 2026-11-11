@@ -41,6 +41,7 @@ typedef struct {
     int32_t tolP1, tolP2, tolCut;                   /* cents, Q16 */
     int32_t invTolEnv;                              /* Q16 */
     uint32_t rng;
+    int32_t vel;                                    /* Q15: the sequencer's step velocity (keys play at 1.0) */
 } ju_voice_t;
 
 typedef struct {
@@ -56,6 +57,7 @@ typedef struct {
 typedef struct { int8_t note; uint8_t down; } ju_held_t;
 
 ju_patch_t ju_patch[2];
+static void ju_zero(void *p, unsigned n) { uint8_t *b = p; while (n--) *b++ = 0; }
 #ifndef JU_POOL
 #define JU_POOL                                     /* the firmware puts the big buffers in its pool section */
 #endif
@@ -269,6 +271,7 @@ static void ju_all_notes_off(void)
     ju_seq_forget();
 }
 
+static int32_t ju_vel_next[2] = {32768, 32768};         /* the velocity the next key-down of a layer gets (the sequencer sets it around its notes) */
 static void ju_trigger(ju_voice_t *v, int note, int glide)
 {
     int l = v->layer;
@@ -278,6 +281,7 @@ static void ju_trigger(ju_voice_t *v, int note, int glide)
     v->pitch = porta ? v->pitch : note << 16;           /* polyphonic portamento: each voice glides from its last pitch */
     v->note = (int8_t)note;
     v->gate = 1; v->st1 = 0; v->st2 = 0;
+    v->vel = ju_vel_next[l];
     v->age = ++ju_age_counter;
     v->lfoGain = 0;
     if (!v->active) {
@@ -511,7 +515,12 @@ volatile uint8_t ju_seq_dirty[2];                    /* a pattern changed (the p
 uint8_t ju_seq_pos[2];                               /* the step playing */
 uint8_t ju_seq_cursor[2];                            /* the step the panel edits and step recording writes to */
 static int8_t ju_seq_trans[2];
-static int16_t ju_seq_snd[2] = {-1, -1};             /* the note the sequencer holds (after transposition), -1 none */
+static int16_t ju_seq_snd[2][4];                     /* the notes the sequencer holds (after transposition): a chord of up to four */
+static uint8_t ju_seq_ns[2];                         /* how many */
+static uint8_t ju_seq_rat[2];                        /* ticks of the step still to repeat the notes (a ratchet): bit n = tick n */
+static uint8_t ju_seq_sw_pend;                       /* ticks until a swung step plays */
+static uint32_t ju_seq_stepn;                        /* steps since the start (swing delays the even ones) */
+static uint32_t ju_seq_rng = 2463534242u;
 static uint8_t ju_seq_gate_left[2];                  /* ticks until the note ends; 255: held on into a tie */
 static uint8_t ju_seq_tick6;                         /* tick within the step */
 static uint32_t ju_seq_acc;                          /* internal clock, samples x 256 */
@@ -519,7 +528,7 @@ static volatile uint8_t ju_seq_ext_ticks;            /* MIDI clock pulses waitin
 static int16_t ju_seq_rec_key[2] = {-1, -1};         /* the key being recorded (real time), -1 none */
 static int16_t ju_seq_rec_step[2] = {-1, -1};
 
-static void ju_seq_forget(void) { ju_seq_snd[0] = ju_seq_snd[1] = -1; }      /* every voice was released: nothing to release later */
+static void ju_seq_forget(void) { ju_seq_ns[0] = ju_seq_ns[1] = 0; ju_seq_rat[0] = ju_seq_rat[1] = 0; }      /* every voice was released: nothing to release later */
 ju_song_t ju_song;
 volatile uint8_t ju_song_dirty;
 volatile uint8_t ju_song_row;                            /* the row playing (while a song plays) */
@@ -527,7 +536,10 @@ uint8_t ju_song_sel;                                     /* the row PLAY starts 
 static uint8_t ju_song_act;                              /* a song is playing (it was started in song mode) */
 static int8_t ju_seq_pidx[2] = {-1, -1};                 /* the pattern each part plays in the song's row, -1 none */
 static uint32_t ju_song_steps, ju_song_row_steps;        /* steps played in the row, and the row's length */
-static ju_pat_t ju_seq_empty;                            /* what a part with no pattern in the row plays: nothing */
+static ju_pat_t ju_seq_empty;
+static uint8_t ju_rec_held[2][16];                       /* keys of the part pressed and recorded (a key pressed while one is down joins its step as a chord) */
+static uint8_t ju_rec_down[2];
+static int8_t ju_rec_last[2] = {-1, -1};                  /* the step the last of them was written to */                            /* what a part with no pattern in the row plays: nothing */
 static int ju_seq_idx(int p) { return ju_song_act ? ju_seq_pidx[p] : (int)(ju_seq_cur[p] % JU_SEQ_PATS); }
 static ju_pat_t *ju_seq_pat(int p) { int i = ju_seq_idx(p); return i < 0 ? &ju_seq_empty : &ju_pat[p][i]; }
 int ju_seq_playing_pat(int p) { return ju_seq_idx(p); }  /* the pattern a part plays now (-1 none) */
@@ -545,20 +557,55 @@ void ju_seq_defaults(void)
     for (p = 0; p < 2; p++)
         for (k = 0; k < JU_SEQ_PATS; k++) {
             ju_pat_t *t = &ju_pat[p][k];
-            for (i = 0; i < JU_SEQ_STEPS; i++) { t->note[i] = 60; t->type[i] = SQ_REST; }
-            t->len = 16; t->gate = 3; t->pad[0] = t->pad[1] = 0;
+            ju_zero(t, sizeof *t);
+            for (i = 0; i < JU_SEQ_STEPS; i++) t->note[i] = 60;
+            t->len = 16; t->gate = 3;
         }
+    ju_zero(ju_rec_held, sizeof ju_rec_held); ju_rec_down[0] = ju_rec_down[1] = 0;
     for (p = 0; p < 2; p++) { ju_seq_cur[p] = 0; ju_seq_cursor[p] = 0; ju_seq_dirty[p] = 0; }
-    for (i = 0; i < JU_SEQ_STEPS; i++) { ju_seq_empty.note[i] = 60; ju_seq_empty.type[i] = SQ_REST; }
+    ju_zero(&ju_seq_empty, sizeof ju_seq_empty);
+    for (i = 0; i < JU_SEQ_STEPS; i++) ju_seq_empty.note[i] = 60;
     ju_seq_empty.len = 16; ju_seq_empty.gate = 3;
     ju_song.n = 0; ju_song_dirty = 0; ju_song_sel = 0; ju_song_act = 0; ju_song_row = 0;
     for (i = 0; i < JU_SONG_ROWS; i++) { ju_song.row[i].pat[0] = ju_song.row[i].pat[1] = JU_SONG_NONE; ju_song.row[i].rep = 1; }
 }
 static void ju_seq_release(int p)
 {
-    if (ju_seq_snd[p] >= 0) ju_layer_key_up(p, ju_seq_snd[p]);
-    ju_seq_snd[p] = -1;
+    int i;
+    for (i = 0; i < ju_seq_ns[p]; i++) ju_layer_key_up(p, ju_seq_snd[p][i]);
+    ju_seq_ns[p] = 0;
     ju_seq_gate_left[p] = 0;
+}
+/* ---- a step's chord: the root (note[]) and up to three notes above it, 1-15 semitones (chord[][]) */
+static int ju_chord_list(const ju_pat_t *t, int s, int *out)             /* the notes, root first; their count */
+{
+    int n = 1, k;
+    out[0] = t->note[s];
+    for (k = 0; k < 3; k++) {
+        int o = k == 0 ? (t->chord[s][0] & 15) : k == 1 ? (t->chord[s][0] >> 4) : (t->chord[s][1] & 15);
+        if (o && out[0] + o <= 127) out[n++] = out[0] + o;
+    }
+    return n;
+}
+int ju_chord_notes(const ju_pat_t *t, int s, int *out) { return ju_chord_list(t, s, out); }
+static void ju_chord_set(ju_pat_t *t, int s, const int *nn, int n)       /* nn ascending, nn[n-1] - nn[0] <= 15 */
+{
+    int o[3] = {0, 0, 0}, i;
+    for (i = 1; i < n && i < 4; i++) o[i - 1] = nn[i] - nn[0];
+    t->note[s] = (uint8_t)nn[0];
+    t->chord[s][0] = (uint8_t)(o[0] | (o[1] << 4));
+    t->chord[s][1] = (uint8_t)o[2];
+}
+static int ju_chord_add(ju_pat_t *t, int s, int note)                    /* 1 if the note joined the step's chord */
+{
+    int nn[5], n = ju_chord_list(t, s, nn), i, j;
+    for (i = 0; i < n; i++) if (nn[i] == note) return 0;
+    if (n >= 4) return 0;
+    nn[n++] = note;
+    for (i = 1; i < n; i++) { int x = nn[i]; for (j = i - 1; j >= 0 && nn[j] > x; j--) nn[j + 1] = nn[j]; nn[j + 1] = x; }
+    if (nn[n - 1] - nn[0] > 15) return 0;
+    ju_chord_set(t, s, nn, n);
+    return 1;
 }
 /* ---- the metronome's click: a short decaying sine, higher on the first beat of a bar. It is mixed after the USB tap, so it is heard in
  * the headphones and speaker and never in the USB audio. */
@@ -591,7 +638,7 @@ void ju_click_render(int32_t *out, uint32_t n)          /* interleaved stereo, Q
 /* ---- undo: the last JU_UNDO_N pattern changes of recording (a note written, a tie added) and of erasing steps, one step at a time.
  * An entry remembers what the step was; entries pushed together (an erase of a step and its ties) are undone together. */
 #define JU_UNDO_N 32
-typedef struct { uint8_t part, pat, step, note, type, grp; } ju_undo_t;
+typedef struct { uint8_t part, pat, step, note, type, grp, flags, c0, c1, lv; } ju_undo_t;
 static ju_undo_t ju_undo[JU_UNDO_N];
 static uint8_t ju_undo_head, ju_undo_cnt;
 static void ju_undo_push(int part, int step, int grp)    /* before the step changes */
@@ -601,6 +648,7 @@ static void ju_undo_push(int part, int step, int grp)    /* before the step chan
     if (ju_seq_idx(part) < 0) return;
     u->part = (uint8_t)part; u->pat = (uint8_t)ju_seq_idx(part); u->step = (uint8_t)step;
     u->note = t->note[step]; u->type = t->type[step]; u->grp = (uint8_t)grp;
+    u->flags = t->flags[step]; u->c0 = t->chord[step][0]; u->c1 = t->chord[step][1]; u->lv = t->lv[step];
     ju_undo_head = (uint8_t)((ju_undo_head + 1) % JU_UNDO_N);
     if (ju_undo_cnt < JU_UNDO_N) ju_undo_cnt++;
 }
@@ -614,6 +662,7 @@ static void ju_seq_undo(void)                            /* the last change, wit
             const ju_undo_t *u = &ju_undo[ju_undo_head];
             ju_pat_t *t = &ju_pat[u->part][u->pat];
             t->note[u->step] = u->note; t->type[u->step] = u->type;
+            t->flags[u->step] = u->flags; t->chord[u->step][0] = u->c0; t->chord[u->step][1] = u->c1; t->lv[u->step] = u->lv;
             ju_seq_dirty[u->part] = 1;
             ju_seq_cursor[u->part] = u->step;
             more = u->grp;
@@ -627,7 +676,10 @@ static void ju_seq_erase(int part, int step)             /* the step and the tie
     int k = step, first = 1;
     if (ju_seq_idx(part) < 0 || step < 0 || step >= t->len) return;
     do {
-        if (t->type[k] != SQ_REST) { ju_undo_push(part, k, !first); first = 0; t->type[k] = SQ_REST; }
+        if (t->type[k] != SQ_REST || t->lv[k]) {
+            ju_undo_push(part, k, !first); first = 0; t->type[k] = SQ_REST;
+            t->flags[k] = 0; t->chord[k][0] = t->chord[k][1] = 0; t->lv[k] = 0;
+        }
         k++;
     } while (k < t->len && t->type[k] == SQ_TIE);
     ju_seq_dirty[part] = 1;
@@ -670,6 +722,7 @@ static void ju_seq_start_state(void)
     }
     ju_seq_tick6 = 0;
     ju_seq_pp = 0;
+    ju_seq_stepn = 0; ju_seq_sw_pend = 0; ju_seq_rat[0] = ju_seq_rat[1] = 0;
     ju_seq_run = 1;
 }
 static void ju_seq_start(void)
@@ -690,16 +743,35 @@ static void ju_seq_stop(void)
     int p;
     ju_seq_run = 0;
     ju_seq_cnt = 0;
+    ju_seq_sw_pend = 0; ju_seq_rat[0] = ju_seq_rat[1] = 0;
     ju_song_act = 0;
     for (p = 0; p < 2; p++) { ju_seq_release(p); ju_seq_rec_key[p] = ju_seq_rec_step[p] = -1; }
+}
+static const int32_t ju_vel_q15[4] = {32768, 45875, 20480, 9830};   /* normal, accent (+3 dB), soft, ghost */
+static uint32_t ju_seq_rand(void) { ju_seq_rng ^= ju_seq_rng << 13; ju_seq_rng ^= ju_seq_rng >> 17; ju_seq_rng ^= ju_seq_rng << 5; return ju_seq_rng; }
+static void ju_seq_hit(int p, const ju_pat_t *t, int pos, int gate)       /* the step's chord goes down at the step's velocity */
+{
+    int nn[4], n, i;
+    if (ju_seq_ns[p]) ju_seq_release(p);
+    n = ju_chord_list(t, pos, nn);
+    ju_vel_next[p] = ju_vel_q15[SQF_VEL(t->flags[pos])];
+    for (i = 0; i < n; i++) {
+        int m = nn[i] + (ju_global[G_SEQKEYS] ? ju_seq_trans[p] : 0);
+        m = m < 0 ? 0 : m > 127 ? 127 : m;
+        ju_layer_key_down(p, m);
+        ju_seq_snd[p][ju_seq_ns[p]++] = (int16_t)m;
+    }
+    ju_vel_next[p] = 32768;
+    ju_seq_gate_left[p] = (uint8_t)gate;
 }
 static void ju_seq_step(int p)
 {
     ju_pat_t *t = ju_seq_pat(p);
-    int pos, type, nexttie, n, rp = ju_global[G_PANEL] & 1;
+    int pos, type, nexttie, rp = ju_global[G_PANEL] & 1;
     if (!t->len) return;
     pos = (ju_seq_pos[p] + 1) % t->len;
     ju_seq_pos[p] = (uint8_t)pos;
+    ju_seq_rat[p] = 0;
     type = t->type[pos];
     if (ju_seq_rec && p == rp && ju_seq_rec_key[p] >= 0) {            /* real-time recording: a key still down ties on; its own step is played live */
         if (pos == ju_seq_rec_step[p]) type = -1;                     /* nothing for the sequencer to play */
@@ -708,24 +780,36 @@ static void ju_seq_step(int p)
     if (type < 0) return;
     nexttie = t->len > 1 && t->type[(pos + 1) % t->len] == SQ_TIE;
     if (type == SQ_NOTE) {
-        if (ju_seq_snd[p] >= 0) ju_seq_release(p);
-        n = (int)t->note[pos] + (ju_global[G_SEQKEYS] ? ju_seq_trans[p] : 0);
-        n = n < 0 ? 0 : n > 127 ? 127 : n;
-        ju_layer_key_down(p, n);
-        ju_seq_snd[p] = (int16_t)n;
-        ju_seq_gate_left[p] = nexttie ? 255 : (uint8_t)(t->gate < 1 ? 1 : t->gate > 6 ? 6 : t->gate);
+        int prob = SQF_PROB(t->flags[pos]), rat = SQF_RAT(t->flags[pos]) + 1, st = ju_seq_tick6, len = 6 - st, k;
+        static const uint8_t off[4][4] = {{0, 0, 0, 0}, {0, 3, 0, 0}, {0, 2, 4, 0}, {0, 2, 3, 5}};
+        if (prob && (int)(ju_seq_rand() >> 16) % 4 >= 4 - prob) {      /* the step does not play this time: 75 %, 50 %, 25 % chance */
+            if (ju_seq_ns[p]) ju_seq_release(p);
+            return;
+        }
+        ju_seq_hit(p, t, pos, rat > 1 ? 1 : (nexttie ? 255 : (t->gate < 1 ? 1 : t->gate > 6 ? 6 : t->gate)));
+        for (k = 1; k < rat; k++) {                                    /* a ratchet: the notes again, spread over the rest of the step */
+            int tk = st + off[rat - 1][k] * len / 6;
+            if (tk > st && tk < 6) ju_seq_rat[p] |= (uint8_t)(1u << tk);
+        }
     } else if (type == SQ_TIE) {
-        if (ju_seq_snd[p] >= 0) ju_seq_gate_left[p] = nexttie ? 255 : (uint8_t)(t->gate < 1 ? 1 : t->gate > 6 ? 6 : t->gate);
-    } else if (ju_seq_snd[p] >= 0) {
+        if (ju_seq_ns[p]) ju_seq_gate_left[p] = nexttie ? 255 : (uint8_t)(t->gate < 1 ? 1 : t->gate > 6 ? 6 : t->gate);
+    } else if (ju_seq_ns[p]) {
         ju_seq_release(p);
     }
 }
+static void ju_seq_steps(void) { int p; for (p = 0; p < 2; p++) ju_seq_step(p); }
 static void ju_seq_tick(void)
 {
     int p;
-    for (p = 0; p < 2; p++)
-        if (ju_seq_snd[p] >= 0 && ju_seq_gate_left[p] != 255 && ju_seq_gate_left[p] && --ju_seq_gate_left[p] == 0) ju_seq_release(p);
+    for (p = 0; p < 2; p++) {
+        if (ju_seq_ns[p] && ju_seq_gate_left[p] != 255 && ju_seq_gate_left[p] && --ju_seq_gate_left[p] == 0) ju_seq_release(p);
+        if (ju_seq_rat[p] & (1u << ju_seq_tick6)) {                       /* a ratchet repeat */
+            ju_seq_rat[p] &= (uint8_t)~(1u << ju_seq_tick6);
+            ju_seq_hit(p, ju_seq_pat(p), ju_seq_pos[p], 1);
+        }
+    }
     if (ju_seq_tick6 == 0) {
+        int sw = ju_global[G_SWING] & 3;
         if (ju_song_act) {                                                  /* the song: a row ends after its repeats of the longer pattern */
             if (ju_song_steps >= ju_song_row_steps) {
                 int next = ju_song_row + 1;
@@ -737,7 +821,11 @@ static void ju_seq_tick(void)
             }
             ju_song_steps++;
         }
-        for (p = 0; p < 2; p++) ju_seq_step(p);
+        ju_seq_stepn++;
+        if (sw && !(ju_seq_stepn & 1u)) ju_seq_sw_pend = (uint8_t)sw;       /* swing: every second step is late */
+        else { ju_seq_sw_pend = 0; ju_seq_steps(); }
+    } else if (ju_seq_sw_pend && --ju_seq_sw_pend == 0) {
+        ju_seq_steps();
     }
     if (++ju_seq_tick6 >= 6) ju_seq_tick6 = 0;
 }
@@ -797,18 +885,34 @@ static int ju_seq_filter(int mask, int note, int on)
         if (!(mask & (1 << p))) continue;
         t = ju_seq_pat(p);
         if (ju_seq_idx(p) < 0) continue;                              /* no pattern in this row of the song: the keys play */
+        if (!on && (ju_rec_held[p][note >> 3] & (1u << (note & 7)))) { ju_rec_held[p][note >> 3] &= (uint8_t)~(1u << (note & 7)); if (ju_rec_down[p]) ju_rec_down[p]--; }
         if (ju_seq_rec && p == rp && t->len && !ju_seq_cnt) {        /* the key sounds and is written */
             if (on) {
                 int s;
+                if (!ju_seq_run && ju_rec_down[p] && ju_rec_last[p] >= 0 && ju_rec_last[p] < t->len) {     /* a key while another is held: the step's chord */
+                    ju_undo_push(p, ju_rec_last[p], 0);
+                    if (ju_chord_add(t, ju_rec_last[p], note)) { ju_seq_dirty[p] = 1; ju_rec_held[p][note >> 3] |= (uint8_t)(1u << (note & 7)); ju_rec_down[p]++; }
+                    else if (ju_undo_cnt) { ju_undo_head = (uint8_t)((ju_undo_head + JU_UNDO_N - 1) % JU_UNDO_N); ju_undo_cnt--; }
+                    continue;
+                }
                 if (!ju_seq_run) { s = ju_seq_cursor[p] % t->len; ju_seq_cursor[p] = (uint8_t)((s + 1) % t->len); }
                 else {                                               /* real time: to the nearest point of the grid (G_QUANT) */
                     int g = 1 << (ju_global[G_QUANT] & 3), unit = 6 * g;
                     int ticks = ju_seq_pos[p] * 6 + (ju_seq_tick6 ? ju_seq_tick6 : 6);          /* ticks since the pattern began */
                     s = (((ticks + unit / 2) / unit) * g) % t->len;
+                    if (ju_seq_rec_key[p] >= 0 && ju_seq_rec_step[p] == s && ju_seq_rec_key[p] != note && t->type[s] == SQ_NOTE) {   /* a second key in the step: a chord */
+                        ju_undo_push(p, s, 0);
+                        if (ju_chord_add(t, s, note)) ju_seq_dirty[p] = 1;
+                        else if (ju_undo_cnt) { ju_undo_head = (uint8_t)((ju_undo_head + JU_UNDO_N - 1) % JU_UNDO_N); ju_undo_cnt--; }
+                        continue;
+                    }
                     ju_seq_rec_key[p] = (int16_t)note; ju_seq_rec_step[p] = (int16_t)s;
                 }
                 ju_undo_push(p, s, 0);
                 t->note[s] = (uint8_t)note; t->type[s] = SQ_NOTE;
+                t->flags[s] = 0; t->chord[s][0] = t->chord[s][1] = 0;     /* a new note: a plain one */
+                ju_rec_last[p] = (int8_t)s;
+                if (!(ju_rec_held[p][note >> 3] & (1u << (note & 7)))) { ju_rec_held[p][note >> 3] |= (uint8_t)(1u << (note & 7)); ju_rec_down[p]++; }
                 ju_seq_dirty[p] = 1;
             } else if (ju_seq_rec_key[p] == note) ju_seq_rec_key[p] = -1;
             continue;
@@ -983,7 +1087,7 @@ void ju_init(void)
     ju_fx_tail = 0;
     ju_seq_defaults();
     ju_seq_run = ju_seq_rec = ju_seq_req = 0;
-    ju_seq_snd[0] = ju_seq_snd[1] = -1;
+    ju_seq_ns[0] = ju_seq_ns[1] = 0;
     ju_seq_rec_key[0] = ju_seq_rec_key[1] = ju_seq_rec_step[0] = ju_seq_rec_step[1] = -1;
     ju_seq_trans[0] = ju_seq_trans[1] = 0;
     ju_seq_tick6 = 0;
@@ -1051,9 +1155,39 @@ static void ju_update_layer(int l)
     }
 }
 
+/* ---- lanes: a pattern's lane moves one sound parameter step by step. The value is put into the patch for the block that is rendered and
+ * taken out again before the block ends (ju_finish, or the start of the next one), so the panel, the saves and the patch never see it. */
+const uint8_t ju_lane_param[JU_LANE_N] = {P_VCF_CUT, P_VCF_RES, P_HPF, P_MIX, P_V1_XMOD, P_V2_TUNE, P_VM_PW, P_LFO_RATE, P_VM_LFO, P_VCF_LFO, P_VCF_ENV, P_VCA_LEVEL};
+static uint8_t ju_lane_set[2], ju_lane_idx[2], ju_lane_orig[2];
+static void ju_lane_restore(void)
+{
+    int l;
+    for (l = 0; l < 2; l++)
+        if (ju_lane_set[l]) { ju_patch[l].v[ju_lane_param[ju_lane_idx[l]]] = ju_lane_orig[l]; ju_lane_set[l] = 0; }
+}
+static void ju_lane_apply(void)
+{
+    int l;
+    if (!ju_seq_run || ju_seq_cnt) return;
+    for (l = 0; l < 2; l++) {
+        const ju_pat_t *t;
+        int lv;
+        if (ju_seq_idx(l) < 0) continue;
+        t = ju_seq_pat(l);
+        if (t->lane < 1 || t->lane > JU_LANE_N || ju_seq_pos[l] >= JU_SEQ_STEPS) continue;
+        lv = t->lv[ju_seq_pos[l]];
+        if (lv < 1 || lv > 128) continue;
+        ju_lane_idx[l] = (uint8_t)(t->lane - 1);
+        ju_lane_orig[l] = ju_patch[l].v[ju_lane_param[ju_lane_idx[l]]];
+        ju_patch[l].v[ju_lane_param[ju_lane_idx[l]]] = (uint8_t)((lv - 1) * 255 / 127);
+        ju_lane_set[l] = 1;
+    }
+}
+
 void ju_prepare_block(void)
 {
     int l, km = ju_global[G_KEYMODE];
+    ju_lane_restore();
     if (ju_panic_req) { ju_panic_req = 0; ju_all_notes_off(); }
     if (ju_patch_stage_req) { ju_patch[0] = ju_patch_stage[0]; ju_patch[1] = ju_patch_stage[1]; ju_patch_stage_req = 0; }
     for (l = 0; l < 2; l++)
@@ -1087,6 +1221,7 @@ void ju_prepare_block(void)
     }
     ju_arp_tick();
     ju_seq_block();
+    ju_lane_apply();
     ju_update_layer(0);
     ju_update_layer(1);
     ju_fx_control(&ju_patch[0].fx, 40 + ju_global[G_TEMPO]);
@@ -1186,6 +1321,7 @@ static void ju_render_voice(ju_voice_t *v, int32_t *out)
         trem = 65536 - ju_mulq(kTrem[P[P_VCA_LFO] & 3], (32768 - (lfo >> 9)), 16);
         vcaNew = ju_mulq(v->env2 >> 6, c->lvlS, 16);                     /* Q24 */
         vcaNew = ju_mulq(vcaNew, trem, 16);
+        vcaNew = (int32_t)(((int64_t)vcaNew * v->vel) >> 15);
     }
 
     /* pulse width: the high part, a fraction of the cycle */
@@ -1311,6 +1447,7 @@ void ju_render(int32_t *upper, int32_t *lower)
 /* Master level, balance and a soft clip: Q24 buffers -> interleaved stereo Q15 (L, R). Mono as the original. */
 void ju_finish(const int32_t *upper, const int32_t *lower, int32_t *out)
 {
+    ju_lane_restore();
     const int32_t vol = (int32_t)ju_global[G_VOLUME] * 257;                 /* Q16 */
     const int32_t gu = ju_mulq(ju_mulq(vol, (int32_t)ju_global[G_BAL_U] * 257, 16), 39322, 16);   /* x 0.6 */
     const int32_t gl = ju_mulq(ju_mulq(vol, (int32_t)ju_global[G_BAL_L] * 257, 16), 39322, 16);

@@ -71,7 +71,7 @@ static const spage_t kPerfPages[] = {
     {"LFO MOD", K_RED, 5, {PG(G_MOD_RISE), PG(G_MOD_VCO), PG(G_MOD_VCOSW), PG(G_MOD_VCF), PG(G_MOD_VCFSW)}},
     {"MASTER", K_ORANGE, 4, {PG(G_VOLUME), PG(G_BAL_U), PG(G_BAL_L), PG(G_TUNE)}},
     {"MIDI", K_YELLOW, 2, {PG(G_CH_U), PG(G_CH_L)}},
-    {"SEQUENCER", K_ORANGE, 5, {PG(G_SYNC), PG(G_TEMPO), PG(G_SEQKEYS), PG(G_SONG), PG(G_SONGLOOP)}},
+    {"SEQUENCER", K_ORANGE, 6, {PG(G_SYNC), PG(G_TEMPO), PG(G_SEQKEYS), PG(G_SONG), PG(G_SONGLOOP), PG(G_SWING)}},
     {"RECORDING", K_YELLOW, 4, {PG(G_METRO), PG(G_COUNTIN), PG(G_CLICKVOL), PG(G_QUANT)}},
     {"STORAGE", K_BLUE, 1, {PG(G_AUTOSAVE)}},
 };
@@ -201,7 +201,7 @@ typedef struct {
     int turning_enc;
     uint8_t overview;
     uint8_t cpu;                        /* percent, for the header */
-    uint8_t seq_sub;                    /* the SEQ page: 0 the steps, 1 the setup */
+    uint8_t seq_sub;                    /* the SEQ page: 0 the roll, 1 the setup, 2 the song, 3 the step's velocity / probability / ratchet, 4 its chord and lane */
     uint8_t rec_used, panic_done;       /* REC was used as a modifier; PLAY held long enough for all notes off */
     uint32_t play_down_at, seq_save_at, clear_at;
     uint8_t seq_lo;                     /* the lowest note the piano roll shows (it follows the cursor) */
@@ -547,6 +547,7 @@ static void ui_group_to(int g)                         /* the Q-Link page on a g
  * (setup: 1 the pattern's length, 2 the gate, 3 the tempo, 4 the pattern). A note is a NOTE step followed by the TIE steps it lasts
  * through; the length knob adds and takes away ties (up to the next note), and 0 deletes the note. */
 #define ROLL_ROWS 22                                        /* semitones the roll shows */
+static const uint8_t kSeqNext[5] = {3, 2, 0, 4, 1};     /* SEQ again: the roll, the step page, the chord page, the setup, the song, the roll */
 static ju_pat_t *ui_pat(void) { return &ju_pat[ui_layer()][ju_seq_cur[ui_layer()] % JU_SEQ_PATS]; }
 static int seq_head(const ju_pat_t *t, int i)               /* the NOTE step a step belongs to (itself, or the one its ties hang on), -1 if none */
 {
@@ -642,6 +643,57 @@ static void ui_song_input(const ju_in_t *in, uint32_t now)
     }
 }
 
+/* ---- the step pages (SEQ again after the roll). Page 3: KNOB 2 the velocity, 3 the probability, 4 the ratchet of the step under the cursor.
+ * Page 4: KNOB 2 the chord, 3 the lane's parameter (the pattern's), 4 the lane's value at this step. KNOB 1 moves the cursor on both. */
+typedef struct { const char *name; uint8_t o[3]; } chord_t;
+static const chord_t kChords[] = {{"NONE", {0, 0, 0}}, {"5TH", {7, 0, 0}}, {"OCT", {12, 0, 0}}, {"MAJ", {4, 7, 0}}, {"MIN", {3, 7, 0}}, {"SUS2", {2, 7, 0}},
+    {"SUS4", {5, 7, 0}}, {"DIM", {3, 6, 0}}, {"AUG", {4, 8, 0}}, {"MAJ7", {4, 7, 11}}, {"MIN7", {3, 7, 10}}, {"DOM7", {4, 7, 10}}, {"MAJ6", {4, 7, 9}}, {"ADD9", {4, 7, 14}}};
+#define NCHORDS ((int)(sizeof kChords / sizeof kChords[0]))
+static int chord_of(const ju_pat_t *t, int s)           /* the preset a step's chord is, -1 if it is one of its own */
+{
+    int i;
+    for (i = 0; i < NCHORDS; i++)
+        if ((t->chord[s][0] & 15) == kChords[i].o[0] && (t->chord[s][0] >> 4) == kChords[i].o[1] && (t->chord[s][1] & 15) == kChords[i].o[2]) return i;
+    return -1;
+}
+static const uint8_t kVelLevel[4] = {2, 3, 1, 0};        /* flag code (normal, accent, soft, ghost) -> its place from quiet to loud */
+static const uint8_t kVelCode[4] = {3, 2, 0, 1};
+static int lane_value_pct(int lv) { return (lv - 1) * 100 / 127; }
+static void ui_step_input(const ju_in_t *in, uint32_t now, ju_pat_t *t, int p)
+{
+    int c = ju_seq_cursor[p], h = seq_head(t, c), n, f;
+    if (in->knob[0]) ju_seq_cursor[p] = (uint8_t)(((int)ju_seq_cursor[p] + in->knob[0] % t->len + t->len) % t->len);
+    if (ui.seq_sub == 3) {
+        if (h < 0) return;                                  /* only a note has them */
+        f = t->flags[h];
+        if (in->knob[1]) { n = kVelLevel[SQF_VEL(f)] + in->knob[1]; n = n < 0 ? 0 : n > 3 ? 3 : n; f = SQF_MAKE(kVelCode[n], SQF_PROB(f), SQF_RAT(f)); }
+        if (in->knob[2]) { n = 3 - SQF_PROB(f) + in->knob[2]; n = n < 0 ? 0 : n > 3 ? 3 : n; f = SQF_MAKE(SQF_VEL(f), 3 - n, SQF_RAT(f)); }
+        if (in->knob[3]) { n = SQF_RAT(f) + in->knob[3]; n = n < 0 ? 0 : n > 3 ? 3 : n; f = SQF_MAKE(SQF_VEL(f), SQF_PROB(f), n); }
+        if (f != t->flags[h]) { t->flags[h] = (uint8_t)f; ju_seq_dirty[p] = 1; }
+        return;
+    }
+    if (in->knob[1]) {                                      /* the chord (a rest becomes a note) */
+        int idx = h >= 0 ? h : c, cur = chord_of(t, idx);
+        n = (cur < 0 ? 0 : cur) + in->knob[1];
+        n = n < 0 ? 0 : n >= NCHORDS ? NCHORDS - 1 : n;
+        if (t->type[idx] == SQ_REST && n > 0) t->type[idx] = SQ_NOTE;
+        t->chord[idx][0] = (uint8_t)(kChords[n].o[0] | (kChords[n].o[1] << 4)); t->chord[idx][1] = kChords[n].o[2];
+        ju_seq_dirty[p] = 1;
+    }
+    if (in->knob[2]) {                                      /* the lane's parameter: off, then the twelve */
+        n = (int)t->lane + in->knob[2];
+        t->lane = (uint8_t)(n < 0 ? 0 : n > JU_LANE_N ? JU_LANE_N : n);
+        ju_seq_dirty[p] = 1;
+    }
+    if (in->knob[3] && t->lane) {                           /* the value at this step: from the sound's own value, up and down, below the bottom none */
+        int lv = t->lv[c];
+        if (!lv) { if (in->knob[3] > 0) lv = ju_patch[p].v[ju_lane_param[t->lane - 1]] * 127 / 255 + 1; }
+        else lv += in->knob[3] * ui_accel(3, now, 8);
+        t->lv[c] = (uint8_t)(lv < 1 ? 0 : lv > 128 ? 128 : lv);
+        ju_seq_dirty[p] = 1;
+    }
+}
+
 static void ui_seq_input(const ju_in_t *in, uint32_t now)
 {
     int p = ui_layer(), n;
@@ -651,7 +703,10 @@ static void ui_seq_input(const ju_in_t *in, uint32_t now)
     if (ui.seq_sub == 2) { ui_song_input(in, now); return; }
     if (!t->len) t->len = 16;
     if (*cur >= t->len) *cur = (uint8_t)(t->len - 1);
-    if (!ui.seq_sub) {
+    if (ui.seq_sub >= 3) {
+        ui_step_input(in, now, t, p);
+        if (in->press & BTN(B_SCL)) { ju_seq_op_part = (uint8_t)p; ju_seq_op_step = *cur; ju_seq_op = 2; }
+    } else if (!ui.seq_sub) {
         int c = *cur, h = seq_head(t, c);
         if (in->knob[0]) *cur = (uint8_t)(((int)*cur + in->knob[0] % t->len + t->len) % t->len);
         if (in->knob[1]) {                                  /* the pitch of the note under the cursor (a rest becomes a note) */
@@ -680,7 +735,7 @@ static void ui_seq_input(const ju_in_t *in, uint32_t now)
         if (in->knob[1]) { n = (int)t->gate + in->knob[1]; t->gate = (uint8_t)(n < 1 ? 1 : n > 6 ? 6 : n); ju_seq_dirty[p] = 1; }
         if (in->knob[2]) { ui.turning_enc = 2; ui_adjust(P_COUNT + G_TEMPO, in->knob[2], now); }
     }
-    if (in->knob[3]) {                                      /* the pattern (both pages) */
+    if (in->knob[3] && ui.seq_sub <= 1) {                   /* the pattern (the roll and the setup) */
         ju_seq_cur[p] = (uint8_t)(((int)ju_seq_cur[p] + (in->knob[3] > 0 ? 1 : JU_SEQ_PATS - 1)) % JU_SEQ_PATS);
         ju_seq_cursor[p] = 0;
         ui.save_at = now + 2000u;                           /* the selection is saved with the settings */
@@ -694,14 +749,15 @@ static void ui_proj_msg(const char *m) { ui.proj_msg = m; ui.proj_msg_at = ui.no
 static int ui_proj_modified(void) { return ui.proj_cur < 0 || ui.work_sig != ui.proj_sig; }
 static void ui_proj_do(int op)                       /* 1 save, 2 load, 3 clear */
 {
-    int s = ui.proj_sel, ask = ui.proj_ask == op && ui.proj_msg_at && ui.now - ui.proj_msg_at < 3000u;
+    int rcs, s = ui.proj_sel, ask = ui.proj_ask == op && ui.proj_msg_at && ui.now - ui.proj_msg_at < 3000u;
     ui.proj_ask = 0;
     if (ju_seq_run || ju_seq_rec) { ui_proj_msg("STOP THE SEQUENCER FIRST"); return; }
     if (op == 1) {
         if (ju_projinfo[s].valid && s != ui.proj_cur && !ask) { ui.proj_ask = 1; ui_proj_msg("OCT+ AGAIN: OVERWRITE THIS SLOT"); return; }
         ju_proj_pidx[0] = (uint8_t)ui.patch_idx[0]; ju_proj_pidx[1] = (uint8_t)ui.patch_idx[1];
-        if (ju_proj_flash_save(s) == 0) { ui.proj_cur = (int8_t)s; ui.proj_sig = ui.work_sig = ju_proj_sig(); ju_store_current(); ui_proj_msg("SAVED"); }
-        else ui_proj_msg("SAVE FAILED");
+        rcs = ju_proj_flash_save(s);
+        if (rcs == 0) { ui.proj_cur = (int8_t)s; ui.proj_sig = ui.work_sig = ju_proj_sig(); ju_store_current(); ui_proj_msg("SAVED"); }
+        else ui_proj_msg(rcs == -2 ? "PROJECT TOO BIG FOR A SLOT" : "SAVE FAILED");
     } else if (op == 2) {
         if (!ju_projinfo[s].valid) { ui_proj_msg("THIS SLOT IS EMPTY"); return; }
         if (ui_proj_modified() && !ask) { ui.proj_ask = 2; ui_proj_msg("UNSAVED WORK: OCT- AGAIN TO LOAD"); return; }
@@ -751,7 +807,7 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     if (in->press & BTN(B_SAVE)) { ui.page = ui.page == PAGE_PATCH ? PAGE_PROJ : PAGE_PATCH; ui.write_mode = 0; ui.proj_ask = 0; }
     if (in->press & BTN(B_ENV)) ui_group_to(ui.page == PAGE_QLINK && ui.qgroup == 2 ? 3 : 2);
     if (in->press & BTN(B_LFO)) ui_group_to(5);
-    if (in->press & BTN(B_SEQ)) { if (ui.page == PAGE_SEQ) ui.seq_sub = (uint8_t)((ui.seq_sub + 1) % 3); else { ui.page = PAGE_SEQ; ui.seq_sub = 0; } ui.write_mode = 0; }
+    if (in->press & BTN(B_SEQ)) { if (ui.page == PAGE_SEQ) ui.seq_sub = kSeqNext[ui.seq_sub % 5]; else { ui.page = PAGE_SEQ; ui.seq_sub = 0; } ui.write_mode = 0; }
     if ((in->press & BTN(B_SCL)) && ui.page == PAGE_PROJ) ui_proj_do(3);
     else if ((in->press & BTN(B_SCL)) && ui.page != PAGE_SEQ) ui_group_to(7);          /* (on the SEQ page SCL clears a step) */
     if (in->press & BTN(B_ARP)) { ju_global[G_ARP_ON] ^= 1; ui.save_at = now + 2000u; }
@@ -770,7 +826,7 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     if (ui.page == PAGE_SEQ && ui.seq_sub == 2) {
         if (in->press & BTN(B_OCTUP)) ui_song_insert();                       /* a copy of the row, before it */
         if (in->press & BTN(B_OCTDN)) { ju_global[G_SONG] ^= 1; ui.save_at = now + 2000u; }          /* song mode on / off */
-    } else if (ui.page == PAGE_SEQ && ui.seq_sub) {
+    } else if (ui.page == PAGE_SEQ && ui.seq_sub == 1) {
         if (in->press & BTN(B_OCTDN)) {                  /* OCT- twice within two seconds: the pattern is cleared */
             if (ui.clear_at && now - ui.clear_at < 2000u) { ui_seq_clear(); ui.clear_at = 0; } else ui.clear_at = now ? now : 1u;
         }
@@ -1159,6 +1215,12 @@ static void d_readout(void)
             cv_text(6, y + 30, ju_global[G_SONG] ? "SEQ AGAIN: THE ROLL" : "SONG IS OFF: OCT- TURNS IT ON", ju_global[G_SONG] ? K_DIM : K_RED, 1);
             return;
         }
+        if (ui.seq_sub >= 3) {
+            cv_text(6, y + 6, ui.seq_sub == 3 ? "2 VELOCITY  3 PROBABILITY  4 RATCHET" : "2 CHORD  3 LANE  4 LANE VALUE", K_DIM, 1);
+            cv_text(6, y + 18, ui.seq_sub == 3 ? "1 MOVES THE STEP  SCL ERASES IT" : "REC + KEYS HELD TOGETHER: A CHORD", K_DIM, 1);
+            cv_text(6, y + 30, "SEQ AGAIN: THE NEXT PAGE", K_DIM, 1);
+            return;
+        }
         if (ui.seq_sub) {
             cv_text(6, y + 6, ui.clear_at ? "PRESS OCT- AGAIN TO CLEAR THE PATTERN" : "THE FOUR KNOBS SET THE FOUR VALUES", ui.clear_at ? K_RED : K_DIM, 1);
             cv_text(6, y + 18, "OCT- TWICE CLEARS THE PATTERN", K_DIM, 1);
@@ -1261,6 +1323,11 @@ static void d_seq_roll(int p, const ju_pat_t *t, int len, int cur, uint16_t col)
         c = i == hc ? K_FOCUS : (playing ? K_TEXT : col);
         cv_rect(x0, y, x1 - x0, h, c);
         if (i >= base && x1 - x0 > 4) cv_rect(x0, y, 2, h, K_BG);                              /* a notch where it starts */
+        if (t->chord[i][0] || t->chord[i][1]) {                                                 /* the rest of the chord */
+            int cn[4], nc = ju_chord_notes(t, i, cn), j;
+            for (j = 1; j < nc; j++)
+                if (cn[j] >= lo && cn[j] < lo + ROLL_ROWS) cv_rect(x0, roll_y(cn[j], lo) + 1, x1 - x0, RL_RH - 1, i == hc ? K_FOCUS : K_DIM);
+        }
     }
     if (ju_seq_run && ju_seq_playing_pat(p) == ju_seq_cur[p] && ju_seq_pos[p] >= base && ju_seq_pos[p] < base + 16)      /* the step playing */
         cv_rect(roll_x(ju_seq_pos[p] - base), RL_Y0, 2, ROLL_ROWS * RL_RH, K_LEDON);
@@ -1272,6 +1339,12 @@ static void d_seq_roll(int p, const ju_pat_t *t, int len, int cur, uint16_t col)
     for (k = 0; k <= 16; k++) cv_rect(roll_x(k), RL_Y1 + 1, 1, k % 4 ? 2 : 4, K_DIM);
     cv_rect(roll_x(cur - base) + sw / 2 - 2, RL_Y1 + 1, 5, 4, K_FOCUS);
     cv_rect(roll_x(cur - base) + sw / 2 - 1, RL_Y1 + 5, 3, 2, K_FOCUS);
+    for (i = base; i < base + 16 && i < len; i++) {            /* under the roll: a mark for a step with a chance below 100 %, a ratchet, a lane value */
+        int x = roll_x(i - base) + 1, f = t->flags[i];
+        if (t->type[i] == SQ_NOTE && SQF_PROB(f)) cv_rect(x, RL_Y1 + 5, 3, 3, K_RED);
+        if (t->type[i] == SQ_NOTE && SQF_RAT(f)) cv_rect(x + 4, RL_Y1 + 5, 3, 3, K_YELLOW);
+        if (t->lane && t->lv[i]) cv_rect(x + 8, RL_Y1 + 5, 3, 3, K_BLUE);
+    }
 }
 
 /* ---- the song page: a list of rows, five at a time at double size */
@@ -1308,6 +1381,45 @@ static void d_song(void)
     }
 }
 
+static void d_step_cards(int p, const ju_pat_t *t, int len, int cur, int h, uint16_t col)
+{
+    static const char *const velname[4] = {"NORMAL", "ACCENT", "SOFT", "GHOST"};
+    static const char *const pct[4] = {"100%", "75%", "50%", "25%"};
+    static const char *const rname[4] = {"x1", "x2", "x3", "x4"};
+    char nm[4][12], vl[4][14], un[4][14];
+    int q, f = h >= 0 ? t->flags[h] : 0, idx = h >= 0 ? h : cur, size[4] = {3, 2, 3, 3}, ch = chord_of(t, idx);
+    char b[16];
+    for (q = 0; q < 4; q++) { nm[q][0] = 0; vl[q][0] = 0; un[q][0] = 0; }
+    ui_strcat(nm[0], 12, "STEP");
+    ui_num(vl[0], 14, cur + 1); ui_strcat(vl[0], 14, "/"); ui_num(vl[0], 14, len);
+    if (h >= 0) seq_note_name(un[0], t->note[h]); else ui_strcat(un[0], 14, "NO NOTE");
+    if (ui.seq_sub == 3) {
+        ui_strcat(nm[1], 12, "VELOCITY"); ui_strcat(vl[1], 14, h >= 0 ? velname[SQF_VEL(f)] : "---");
+        ui_strcat(nm[2], 12, "PROBABILITY"); ui_strcat(vl[2], 14, h >= 0 ? pct[SQF_PROB(f)] : "---"); ui_strcat(un[2], 14, "CHANCE");
+        ui_strcat(nm[3], 12, "RATCHET"); ui_strcat(vl[3], 14, h >= 0 ? rname[SQF_RAT(f)] : "---"); ui_strcat(un[3], 14, "HITS");
+        size[1] = 2;
+    } else {
+        ui_strcat(nm[1], 12, "CHORD"); ui_strcat(vl[1], 14, h < 0 && t->type[idx] != SQ_NOTE ? "---" : ch >= 0 ? kChords[ch].name : "CUSTOM");
+        ui_strcat(nm[2], 12, "LANE"); ui_strcat(vl[2], 14, t->lane ? ju_pshort(ju_lane_param[t->lane - 1]) : "OFF");
+        if (t->lane) ui_strcat(un[2], 14, ju_plong(ju_lane_param[t->lane - 1]));
+        ui_strcat(nm[3], 12, "VALUE");
+        if (!t->lane) ui_strcat(vl[3], 14, "---");
+        else if (!t->lv[cur]) { ui_strcat(vl[3], 14, "NONE"); ui_strcat(un[3], 14, "THE SOUND'S OWN"); }
+        else { ui_num(vl[3], 14, lane_value_pct(t->lv[cur])); ui_strcat(vl[3], 14, "%"); }
+        size[1] = 2; size[2] = 3; size[3] = t->lane && t->lv[cur] ? 3 : 2;
+    }
+    for (q = 0; q < 4; q++) {
+        int x = (q & 1) * 120, y = 26 + (q >> 1) * 86;
+        cv_rect(x + 2, y, 116, 82, K_PANEL);
+        cv_rect(x + 2, y, 116, 3, col);
+        cv_text(x + 8, y + 9, nm[q], col, 1);
+        cv_text(x + 8, y + 26, vl[q], K_TEXT, size[q]);
+        { char u[16]; u[0] = 0; ui_strcat(u, sizeof u, un[q]); if (cv_text_w(u, 1) > 104) u[16 - 1] = 0; cv_text(x + 8, y + 62, u, K_DIM, 1); }
+        b[0] = 0; ui_strcat(b, sizeof b, "KNOB "); ui_num(b, sizeof b, q + 1);
+        cv_text(x + 110 - cv_text_w(b, 1), y + 70, b, K_LINE, 1);
+    }
+}
+
 static void d_seq(void)
 {
     int p = ui_layer();
@@ -1317,6 +1429,7 @@ static void d_seq(void)
     uint16_t col = p ? K_BLUE : K_ORANGE;
     if (ui.seq_sub == 2) { d_song(); return; }
     cv_rect(0, 24, CV_W, 34, K_BG);
+    if (ui.seq_sub >= 3) { d_step_cards(p, t, len, cur, h, col); return; }
     if (ui.seq_sub) {                                       /* the setup: four big values, as Sloop shows its settings */
         static const char *const nm[4] = {"LENGTH", "GATE", "TEMPO", "PATTERN"};
         static const char *const un[4] = {"STEPS", "OF STEP", 0, "OF 16"};

@@ -36,6 +36,7 @@ enum {
     G_SEQKEYS,          /* a key while a pattern plays: 0 sounds (play along), 1 transposes the pattern and does not sound */
     G_SONG,             /* song mode: PLAY plays the song's rows (patterns chained) instead of one pattern */
     G_SONGLOOP,         /* the song starts again after its last row */
+    G_SWING,            /* every second sixteenth is late by this many clock ticks (0-3 of 6: 50, 58, 67, 75 %) */
     G_AUTOSAVE,         /* 1: the working copy is kept in flash by itself (when quiet); 0: only what is saved by hand */
     G_COUNT
 };
@@ -121,12 +122,22 @@ int32_t ju_note_beats_q16(int idx);                 /* a note value (index 0-21:
 #define JU_SEQ_STEPS 64
 #define JU_SEQ_PATS 16
 enum { SQ_REST, SQ_NOTE, SQ_TIE };
+/* a step's flags: velocity (0 normal, 1 accent, 2 soft, 3 ghost), probability (0 100 %, 1 75, 2 50, 3 25), ratchet (0 once, 1 x2, 2 x3, 3 x4) */
+#define SQF_VEL(f) ((f) & 3)
+#define SQF_PROB(f) (((f) >> 2) & 3)
+#define SQF_RAT(f) (((f) >> 4) & 3)
+#define SQF_MAKE(v, p, r) ((uint8_t)((v) | ((p) << 2) | ((r) << 4)))
+#define JU_LANE_N 12                                 /* the sound parameters a pattern's lane can move (ju_lane_param) */
 typedef struct {
-    uint8_t note[JU_SEQ_STEPS];                      /* 0-127 */
+    uint8_t note[JU_SEQ_STEPS];                      /* 0-127: the root of the step's chord */
     uint8_t type[JU_SEQ_STEPS];                      /* SQ_REST, SQ_NOTE, SQ_TIE */
     uint8_t len;                                     /* steps, 1-64 */
     uint8_t gate;                                    /* ticks of a step's 6 a note lasts, 1-6 */
-    uint8_t pad[2];
+    uint8_t lane;                                    /* 0: no lane, else 1 + the index in ju_lane_param: the sound parameter the lane values move */
+    uint8_t pad;
+    uint8_t flags[JU_SEQ_STEPS];                     /* SQF_* */
+    uint8_t chord[JU_SEQ_STEPS][2];                  /* up to three more notes above the root, in semitones 1-15: [0] low nibble, [0] high nibble, [1] low nibble; 0: none */
+    uint8_t lv[JU_SEQ_STEPS];                        /* the lane's value at the step: 0 none (the sound's own value), else 1-128 for 0-255 */
 } ju_pat_t;
 
 /* ---- the song: rows that chain patterns */

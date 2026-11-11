@@ -67,7 +67,7 @@ the last change, once nothing sounds.
 
 ### Sequencer
 
-One pattern for each part, so the two parts can play different sequences: up to 64 steps of a sixteenth note, one note per step, a
+One pattern for each part, so the two parts can play different sequences: up to 64 steps of a sixteenth note, a note or chord per step, a
 rest or a **tie** (the note keeps sounding through the step). 16 patterns to choose from per part, saved in flash two seconds after
 a change (when it is stopped and nothing sounds). It plays through the part's voices, so the patch's assign mode and portamento apply.
 
@@ -97,12 +97,26 @@ a change (when it is stopped and nothing sounds). It plays through the part's vo
   under the cursor (the header shows SNG and the row); it stops after the last row, or starts again with LUP on. Recording during a song
   overdubs into the pattern the row is playing. The song is saved in flash like the patterns.
 
+- **Step details** (press SEQ again after the roll: two more pages, then the setup and the song). They edit the step under the cursor (KNOB 1
+  moves it; SCL erases it):
+  - page 1: KNOB 2 **velocity** (ghost, soft, normal, accent: the VCA level, 0.3 / 0.6 / 1 / 1.4), KNOB 3 **probability** (25, 50, 75, 100 % chance
+    that the step plays), KNOB 4 **ratchet** (x1 to x4: the notes repeat inside the step, with a short gate);
+  - page 2: KNOB 2 **chord** (14 presets: 5th, octave, major, minor, sus2, sus4, dim, aug, maj7, min7, dom7, maj6, add9; a chord played in
+    step recording or in real time shows as CUSTOM), KNOB 3 **lane**, KNOB 4 the lane's value at this step.
+  - A **chord**: up to four notes, the root and three within 15 semitones above it. In recording, a key pressed while another key of the same step is
+    held joins its chord. The roll draws the extra notes in grey; a red, yellow or blue mark under a step says it has a probability, a ratchet or
+    a lane value.
+  - A **lane** (one per pattern) moves one sound parameter from step to step: cutoff, resonance, HPF, mix, cross-mod, VCO-2 tune, pulse width,
+    LFO rate, VCO / VCF LFO depth, VCF envelope depth or VCA level. A step with a value sets the parameter to it (the sound's own value stays as it
+    was, and comes back when the sequencer stops); a step without one leaves the sound's own value. KNOB 4 starts a value at the sound's own value.
+  - **Swing** (GLO, SEQUENCER page: SWG): every second sixteenth is late by 1, 2 or 3 of its 6 clock ticks (58, 67, 75 %).
+  - The velocity of keys is not recorded (the keys have none): set it per step. MIDI velocity is ignored by the sound, as on the Jupiter-8.
 - **Projects** (SAVE twice: the Patches page, then the Projects page): 8 numbered slots P01-P08. A project is the two sounds (with their
   effects), all 32 patterns, the song, and the musical settings (tempo, key mode and split, balance, arpeggio, portamento, the two MIDI
   channels, song mode and loop). Nothing is saved until you ask: KNOB 1 picks the slot, **OCT+** saves into it (asks again before
   overwriting another project), **OCT-** loads it (asks again if the current work is unsaved), **SCL** clears it (asks again). The open
   project is marked in red, with a `*` while the working copy differs from what was saved. Saving and loading need the sequencer
-  stopped. The working copy (sounds as edited, patterns, song, settings) is also kept in flash by itself, so a power cycle brings back
+  stopped. A project is stored compactly (a pattern takes about as many bytes as it has steps with something in them); a project that does not fit its slot (32 patterns of 64 steps, every step with everything) is refused with a message. The working copy (sounds as edited, patterns, song, settings) is also kept in flash by itself, so a power cycle brings back
   what you were doing, whatever slot is open.
   **GLO, STORAGE page: AUT** turns this autosave off (default on). Off, nothing is written to flash by itself, so no write can
   interrupt the sound; patterns, song and edited sounds are then kept only by saving a project (or writing a patch). The option itself is saved.

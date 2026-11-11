@@ -30,7 +30,7 @@
  * kind (type OBJ_FM6VB, not an st_load object); a new bank is first staged in the autosave's older copy (fm6_vbank.c). */
 enum { OBJ_SETTINGS, OBJ_PROJECT0, OBJ_UPRESET0 = OBJ_PROJECT0 + 4, OBJ_FM6BANK = OBJ_UPRESET0 + 2, OBJ_UPFM6,
        OBJ_AUTOSAVE, OBJ_PROJX0, OBJ_AUTOSAVEX = OBJ_PROJX0 + 4,
-       OBJ_JUPROJ0, OBJ_COUNT = OBJ_JUPROJ0 + 16 };                      /* Mini-Ju08: 8 project slots of 2 objects, 0xAA000..0xC9FFF */   /* (1.0.0: the extensions of the projects and of the
+       OBJ_JUPROJ0, OBJ_COUNT = OBJ_JUPROJ0 + 24 };                      /* Mini-Ju08: 8 project slots of 3 objects, 0xAA000..0xD9FFF */   /* (1.0.0: the extensions of the projects and of the
                                                 * autosave, tracks 5 and 6: 0xA0000..0xA9FFF, where the user sample slots were) */
 #define OBJ_FM6VB 32u                          /* the voice bank's commit records (fm6_vbank.c; >= OBJ_COUNT: st_load
                                                 * never takes one, no object here takes its sectors) */
@@ -69,7 +69,7 @@ static uint32_t st_sector(uint32_t obj, uint32_t copy)  /* flash offset of copy 
         return 0xFC000u + copy * ST_SECTOR;
     if (obj == OBJ_FM6BANK || obj == OBJ_UPFM6)          /* (the same pair: see the flash map) */
         return copy ? 0xFE000u : 0x9F000u;
-    if (obj >= OBJ_JUPROJ0 && obj < OBJ_JUPROJ0 + 16u)
+    if (obj >= OBJ_JUPROJ0 && obj < OBJ_JUPROJ0 + 24u)
         return 0xAA000u + (obj - OBJ_JUPROJ0) * 2u * ST_SECTOR + copy * ST_SECTOR;
     if (obj == OBJ_AUTOSAVE)
         return 0xE5000u + copy * ST_SECTOR;

@@ -94,6 +94,11 @@ int main(int argc, char **argv)
         ju_seq_cursor[0] = 7; snprintf(path, sizeof path, "%s/seq1.ppm", dir); frame(path, 5000);
         ju_pat[0][0].len = 40; ju_seq_cursor[0] = 20; ju_seq_run = 0; ju_seq_rec = 1; snprintf(path, sizeof path, "%s/seq2.ppm", dir); frame(path, 5000);
         ju_seq_rec = 0; ui.seq_sub = 1; ju_pat[0][0].len = 16; snprintf(path, sizeof path, "%s/seq3.ppm", dir); frame(path, 5000);
+        ju_pat[0][0].flags[4] = SQF_MAKE(1, 1, 2); ju_pat[0][0].flags[6] = SQF_MAKE(3, 2, 0); ju_pat[0][0].chord[4][0] = 4 | (7 << 4); ju_pat[0][0].chord[8][0] = 3 | (7 << 4); ju_pat[0][0].chord[8][1] = 10;
+        ju_pat[0][0].lane = 1; ju_pat[0][0].lv[4] = 90; ju_pat[0][0].lv[8] = 30; ju_seq_run = 0; ju_seq_cursor[0] = 4;
+        ui.seq_sub = 0; snprintf(path, sizeof path, "%s/seq4.ppm", dir); frame(path, 5000);
+        ui.seq_sub = 3; snprintf(path, sizeof path, "%s/seq5.ppm", dir); frame(path, 5000);
+        ui.seq_sub = 4; snprintf(path, sizeof path, "%s/seq6.ppm", dir); frame(path, 5000);
         ui.seq_sub = 0; ui.page = PAGE_QLINK;
     }
     {   /* the song page */
