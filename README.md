@@ -5,6 +5,8 @@ A Jupiter-8 style synthesizer for the **M-VAVE FM-1**, built on the platform cod
 `jupiter8_esp32`. It keeps the FM-1's hardware layer, audio output, USB audio and USB/TRS MIDI, and replaces the sequencer,
 the tracks, the old engines and the old screens with the Jupiter-8.
 
+**Compatible with both FM-1 hardware versions**: the original board (Puya P25Q80 flash) and the newer one (UC25HQ80 flash). See [Two board versions](#two-board-versions-flash-chip).
+
 ## What it does
 
 Two parts of four voices each (or eight voices on one patch), 44.1 kHz. Two VCOs per voice with sync and cross mod, HPF,
@@ -132,11 +134,14 @@ CHORUS & MFX on). In 2-Part mode the channels are set on the Performance page (M
 
 ## Two board versions (flash chip)
 
-Some newer FM-1 units carry a different 1 MiB flash chip (UC25HQ80, JEDEC id `0xB36014`) instead of the original Puya P25Q80 (`0x856014`); both use the same
+Mini-Ju08 runs on **both** versions of the FM-1: the original board and the newer one (recognisable by an M-VAVE logo under the screen).
+
+The newer units carry a different 1 MiB flash chip (UC25HQ80, JEDEC id `0xB36014`) instead of the original Puya P25Q80 (`0x856014`); both use the same
 SPI commands. A firmware that only knows the first one treats the storage as absent on the newer boards: nothing is saved (it vanishes at power-off)
-and updates over USB are refused. Mini-Ju08 accepts both chips. The About screen
-shows the id it found (`FLASH B36014`, or `FLASH NONE` in red: then nothing is saved). **Not tested on a newer board**: if saving fails there, the About
-screen and the "SAVE FAILED" message of the Projects page are the first things to look at. A newer board is recognisable by an M-VAVE logo under the screen.
+and updates over USB are refused. Mini-Ju08 recognises both chips, so patterns, projects, settings and USB updates work on either board.
+
+The About screen (GLO past the last performance page) shows the chip it found: `FLASH 856014` or `FLASH B36014`. `FLASH NONE` in red means no known chip
+answered and nothing is saved. If saving ever fails, that line and the "SAVE FAILED" message of the Projects page are the first things to look at.
 
 ## Demonstration video
 
