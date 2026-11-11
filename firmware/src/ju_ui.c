@@ -207,6 +207,7 @@ typedef struct {
     uint8_t song_cur;                   /* the song page's row (n: the empty row after the last) */
     int8_t proj_cur;                    /* the project open (last saved or loaded), -1: none */
     uint8_t proj_sel, proj_ask;         /* the project page's cursor; a confirmation asked: 0 none, 1 save, 2 load, 3 clear */
+    uint32_t busy_at;                   /* when something last sounded or the sequencer last ran (autosaves wait for quiet) */
     uint8_t sig_pend;                   /* a project was loaded: its signature is taken once the engine has its sounds */
     uint32_t proj_sig, work_sig, sig_at, proj_msg_at;   /* signature of the open project as saved; of the working copy; when taken; when the message was set */
     const char *proj_msg;               /* what the last save / load did, shown for a few seconds */
@@ -816,24 +817,25 @@ static void ui_update(const ju_in_t *in, uint32_t now)
     if (ui.overview && now - ui.overview_at >= OVERVIEW_MS) ui.overview = 0;
 
     if ((ju_seq_dirty[0] || ju_seq_dirty[1] || ju_song_dirty) && !ui.seq_save_at) ui.seq_save_at = now + 2000u;
-    if (ui.seq_save_at && (int32_t)(now - ui.seq_save_at) > 0 && !ju_seq_run) {
-        int silent = 1, part;
-        for (i = 0; i < JU_NV; i++) silent = silent && ju_voice_level(i) == 0;
-        if (silent) {                                    /* a flash write stalls the audio: only when nothing sounds and it is not playing */
-            ui.seq_save_at = 0;
-            for (part = 0; part < 2; part++) if (ju_seq_dirty[part]) { ju_seq_dirty[part] = 0; (void)ju_store_seq(part); }
-            if (ju_song_dirty) { ju_song_dirty = 0; (void)ju_store_song(); }
-            ju_store_current();
-        }
-    }
-    /* a flash write stalls the audio for a moment: the globals save themselves only when nothing is sounding */
-    if (ui.save_at && (int32_t)(now - ui.save_at) > 0) {
-        int silent = 1;
-        for (i = 0; i < JU_NV; i++) silent = silent && ju_voice_level(i) == 0;
-        if (silent) {
-            ui.save_at = 0;
-            memcpy(ui.saved_global, ju_global, G_COUNT);
-            ju_store_current();
+    /* A flash write stalls the audio and the LEDs for tens of milliseconds, so every autosave waits for a quiet moment: nothing
+     * sounding, the sequencer stopped and not recording, and 1.5 s since the last of those (a gap between two notes is not quiet). */
+    {
+        int busy = ju_seq_run || ju_seq_rec;
+        for (i = 0; i < JU_NV && !busy; i++) busy = ju_voice_level(i) != 0;
+        if (busy) ui.busy_at = now ? now : 1u;
+        if (!busy && now - ui.busy_at >= 1500u) {
+            if (ui.seq_save_at && (int32_t)(now - ui.seq_save_at) > 0) {
+                int part;
+                ui.seq_save_at = 0; ui.save_at = 0;
+                for (part = 0; part < 2; part++) if (ju_seq_dirty[part]) { ju_seq_dirty[part] = 0; (void)ju_store_seq(part); }
+                if (ju_song_dirty) { ju_song_dirty = 0; (void)ju_store_song(); }
+                memcpy(ui.saved_global, ju_global, G_COUNT);
+                ju_store_current();
+            } else if (ui.save_at && (int32_t)(now - ui.save_at) > 0) {
+                ui.save_at = 0;
+                memcpy(ui.saved_global, ju_global, G_COUNT);
+                ju_store_current();
+            }
         }
     }
 }
