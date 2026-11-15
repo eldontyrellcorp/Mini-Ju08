@@ -45,7 +45,6 @@ All by Hügelton Instruments (Leo Kuroshita), in this tree:
 | What | Licence | Where |
 | --- | --- | --- |
 | Inter Tight font by The Inter Project Authors: the UI text, rasterised into the firmware at build time (`tools/gen_aa_font.py`; the generated tables are not offered as a font, and the font declares no Reserved Font Name) | SIL OFL 1.1 | `assets/fonts/InterTight[wght].ttf`, `LICENSES/OFL-InterTight.txt` (also `assets/fonts/OFL.txt`) |
-| Instrument samples (Versilian Studios VSCO-2 Community Edition, VCSL): the SAMPLE sets, also the SLICE engine's PIANO (the PIANO set's middle C) | CC0 1.0 | `assets/samples-cc0/`, provenance in `ATTRIBUTION.txt` there |
 | DaisySP by Electrosmith, Corp and Emilie Gillet (<https://github.com/electro-smith/DaisySP>): the PHYS engine's modal and string models and the resonator, ported to fixed point | MIT | `firmware/src/phys_dsp.c`, `LICENSES/MIT-DaisySP.txt` |
 | Rings by Emilie Gillet (<https://github.com/pichenettes/eurorack>): the PHYS engine's sympathetic strings, ported to fixed point | MIT | `firmware/src/phys_symp.c`, `LICENSES/MIT-Rings.txt` |
 | Braids by Emilie Gillet, Mutable Instruments (<https://github.com/pichenettes/eurorack>): the BRAIDS engine's macro oscillator (48 models), ported to C and run at 44.1 kHz; at 96 kHz it renders what the original renders, sample for sample (`tests/braids_osc_test.c`) | MIT | `firmware/src/braids_osc.c`, `firmware/src/braids_tab.c`, `LICENSES/MIT-Braids.txt` |

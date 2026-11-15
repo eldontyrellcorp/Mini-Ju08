@@ -81,7 +81,7 @@ the engine numbers are stored):
 ## Samples
 
 There are none: the SAMPLE, GRAIN and SLICE engines and the user sample slots were removed in Mini-Tone 1.0.0
-(`tools/gen_samples.py`, `tools/fetch_cc0.py` and `assets/samples-cc0/` are no longer used by the build).
+(`tools/gen_samples.py` and `tools/fetch_cc0.py` are no longer used by the build; the CC0 samples they read, once in `assets/samples-cc0/`, are no longer in the repository).
 
 ## Browser emulator
 
