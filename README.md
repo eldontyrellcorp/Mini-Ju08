@@ -189,5 +189,5 @@ If it is too much on the device: lower `JU_NV` (voices) in `ju_dsp.c`, or use li
 
 ## Licence
 
-GPL-3.0-only, as Mini-Tone (see [LICENSING.md](LICENSING.md)). The Jupiter-8 synth and panel are ported from `jupiter8_esp32`, whose
-licence is not stated in that tree: it needs the author's confirmation before this is published.
+GPL-3.0-only, as Mini-Tone (see [LICENSING.md](LICENSING.md)). The Jupiter-8 synth and panel are ported from `jupiter8_esp32`
+by Stephane Schmitz, the author of this port, who licenses it under GPL-3.0-only as well.

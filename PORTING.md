@@ -57,4 +57,4 @@ New:
 - Cost of a 4-pole OTA ladder with tanh per stage in fixed point at 44.1 kHz and 8 voices. Plan B: tanh only on the first and last stage, or 4 voices.
 - Flash is nearly full today, but it frees up once the 20 old engines are removed.
 - No on-device measurement is possible yet, so CPU numbers come from instruction counts only (the same way `tests/target_budget.py` does it).
-- Jupiter-8 license: `jupiter8_esp32` has no license file here; the combination with GPL-3.0 Mini-Tone code needs the author's confirmation.
+- Jupiter-8 license: `jupiter8_esp32` is by the author of this port and is licensed GPL-3.0-only, as the Mini-Tone code (see LICENSING.md).
