@@ -20,7 +20,7 @@
 #define FELUCCA_UART 1               /* TRS MIDI IN on UART1 / PH8 */
 #endif
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "FM-1_900"
+#define FELUCCA_ID "FM-1_800"
 #endif
 #ifndef FELUCCA_VERSION
 #define FELUCCA_VERSION "ju0.1"

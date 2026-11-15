@@ -160,7 +160,7 @@ host/build.sh              # the host tests (needs ~/jupiter8_esp32, or JU_REF=.
 FW_MAIN=felucca.c ./build.sh   # Mini-Tone itself
 ```
 
-The package keeps Mini-Tone's identity string (`FM-1_900`): installing it replaces whatever FM-1 firmware is on the device. Installing
+The package has its own identity string (`FM-1_800`; Mini-Tone is `FM-1_900`). Installing it replaces whatever FM-1 firmware is on the device. Installing
 firmware is at your own risk; if an install fails and the FM-1 no longer starts, recovery needs
 [FM-1-transporter](https://github.com/kurogedelic/FM-1-transporter). A first build (before 2026-11-10) had no update entry: a device running it cannot be updated over USB and needs the chip's boot mode (OCT- + OCT+ held 5 s) and `tools/ju_uboot_flash.sh`, which writes the app area from Linux through
 [jl-uboot-tool](https://github.com/kagaimiq/jl-uboot-tool) (backup first; the tool lists this chip family as untested, so its first step only reads),

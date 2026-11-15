@@ -66,7 +66,7 @@ class FakeLink:
 class FakeFM1:
     """a MIDI backend with one FM-1 on it"""
 
-    def __init__(self, image, identity="FM-1_015", name="FM-1", unplug_after=None, after_write="FM-1_900",
+    def __init__(self, image, identity="FM-1_015", name="FM-1", unplug_after=None, after_write="FM-1_800",
                  stall_after=None, bad_addr=None):
         self.image, self.unplug_after, self.after_write = image, unplug_after, after_write
         self.stall_after, self.bad_addr = stall_after, bad_addr
@@ -123,7 +123,7 @@ class FakeFM1:
             if self.stall_after and self.served >= self.stall_after:
                 return
             if addr == I.FINISH_CHECK:
-                threading.Timer(0.05, self.boot, ("ota-FM-1_900", "Felucca Update")).start()
+                threading.Timer(0.05, self.boot, ("ota-FM-1_800", "Felucca Update")).start()
             elif addr == I.FINISH_WRITE:
                 threading.Timer(0.05, self.boot, (self.after_write, "Felucca")).start()
             else:
@@ -140,7 +140,7 @@ class FakeFM1:
 
 # ----------------------------------------------------------------- helpers ---
 
-def package(product="FM-1_900", marker=True, size=0x2000):
+def package(product="FM-1_800", marker=True, size=0x2000):
     raw = bytearray((i * 7) & 0xFF for i in range(size + I.BLOCKS))
     for i in range(I.BLOCKS):
         raw[i * I.BLK + I.KEEP] = (ord(product[i]) + i + 1) & 0xFF if i < len(product) else 0x7D
@@ -178,10 +178,10 @@ def wire():
        and ~sum(u[6:17]) & 0xFF == u[17], "response: header, address, data, checksum")
     raw = package("FM-1_906")
     ok(I.product_of(raw) == "FM-1_906" and len(I.logical_image(raw)) == len(raw) - 20, "product_of / logical_image (synthetic)")
-    body = (bytes([0, 0x59, 0x11, 0, 0, 0]) + b"FM-1_900".ljust(24, b"\0") + bytes([0x85, 0x60, 0x14])).ljust(34, b"\0")
+    body = (bytes([0, 0x59, 0x11, 0, 0, 0]) + b"FM-1_800".ljust(24, b"\0") + bytes([0x85, 0x60, 0x14])).ljust(34, b"\0")
     pkt = bytes([0xF0]) + I.pack7(body) + bytes([0xF7])
     idn = I.parse_identity(pkt)
-    ok(idn is not None and idn.text == "FM-1_900" and idn.version == 900, "identity: bytes after the text's NUL (a flash id) are not part of it")
+    ok(idn is not None and idn.text == "FM-1_800" and idn.version == 800, "identity: bytes after the text's NUL (a flash id) are not part of it")
 
 
 def installs():
@@ -191,10 +191,10 @@ def installs():
 
     dev = FakeFM1(image)
     rc, out, err = cli([p, "--yes"], dev)
-    ok(rc == 0 and dev.bad == 0 and dev.upgrades == 2 and dev.served == 11 and "done: the FM-1 runs FM-1_900" in out
+    ok(rc == 0 and dev.bad == 0 and dev.upgrades == 2 and dev.served == 11 and "done: the FM-1 runs FM-1_800" in out
        and "100%" in out, f"install: running -> loader -> Felucca ({dev.served} reads)")
 
-    dev = FakeFM1(image, identity="ota-FM-1_900", name="Felucca Update")
+    dev = FakeFM1(image, identity="ota-FM-1_800", name="Felucca Update")
     rc, out, err = cli([p, "--yes"], dev)
     ok(rc == 0 and dev.bad == 0 and dev.upgrades == 1 and "update mode" in out, "install: device already in update mode -> finishes the write")
 
@@ -206,7 +206,7 @@ def installs():
     rc, out, err = cli(["--info"], dev)
     ok(rc == 0 and "FM-1_905" in out and "running" in out and dev.upgrades == 0, "--info: identity of the connected FM-1")
 
-    dev = FakeFM1(image, identity="ota-FM-1_900", name="Felucca Update")
+    dev = FakeFM1(image, identity="ota-FM-1_800", name="Felucca Update")
     rc, out, err = cli(["--info"], dev)
     ok(rc == 0 and "update loader" in out, "--info: device in update mode")
 
@@ -243,11 +243,11 @@ def errors():
     ok(rc == 4 and "disconnected" in err and "nothing was written" in err and time.monotonic() - t0 < 3,
        "unplugged in step 1 -> exit 4 'lost', nothing written")
     t0 = time.monotonic()
-    rc, out, err = cli([p, "--yes"], FakeFM1(image, identity="ota-FM-1_900", name="Felucca Update", unplug_after=3))
+    rc, out, err = cli([p, "--yes"], FakeFM1(image, identity="ota-FM-1_800", name="Felucca Update", unplug_after=3))
     ok(rc == 4 and "run the install again" in err and time.monotonic() - t0 < 3, "unplugged during the write -> exit 4 at once")
-    rc, out, err = cli([p, "--yes"], FakeFM1(image, identity="ota-FM-1_900", name="Felucca Update", stall_after=3))
+    rc, out, err = cli([p, "--yes"], FakeFM1(image, identity="ota-FM-1_800", name="Felucca Update", stall_after=3))
     ok(rc == 4 and "stopped answering" in err, "loader stops answering -> exit 4 after the idle time")
-    rc, out, err = cli([p, "--yes"], FakeFM1(image, identity="ota-FM-1_900", name="Felucca Update", bad_addr=len(image)))
+    rc, out, err = cli([p, "--yes"], FakeFM1(image, identity="ota-FM-1_800", name="Felucca Update", bad_addr=len(image)))
     ok(rc == 4 and "outside the package" in err, "read past the package -> exit 4")
 
     rc, out, err = cli([p, "--yes"], FakeFM1(image, after_write="FM-1_015"))
@@ -299,13 +299,13 @@ def official():
         print("official V15 restore: skipped (needs FM-1_v15.fwsc in the repo root)")
         return
     raw = v15.read_bytes()
-    dev = FakeFM1(I.logical_image(raw), identity="FM-1_900", name="Felucca", after_write="FM-1_015")
+    dev = FakeFM1(I.logical_image(raw), identity="FM-1_800", name="Felucca", after_write="FM-1_015")
     rc, out, err = cli([str(v15), "--yes"], dev)
     ok(rc == 0 and dev.bad == 0 and "FM-1_015" in out and dev.identity == "FM-1_015",
        "official V15 (FM-1.fwsc) from Felucca: installed without --force, back as FM-1_015")
     bad = bytearray(raw)
     bad[-1] ^= 1
-    dev = FakeFM1(I.logical_image(bytes(bad)), identity="FM-1_900", name="Felucca")
+    dev = FakeFM1(I.logical_image(bytes(bad)), identity="FM-1_800", name="Felucca")
     rc, out, err = cli([pkgfile("v15mod.fwsc", bytes(bad)), "--yes"], dev)
     ok(rc == 2 and "official V15" in err and dev.sent == [], "a modified V15 is still refused (no MIDI)")
 
