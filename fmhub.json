@@ -1,0 +1,8 @@
+{
+  "what": "A Jupiter-8 style synthesizer for the M-VAVE FM-1 (both hardware versions). Eight voices in two parts (Whole, Dual, Split or 2-Part), two VCOs per voice with sync and cross mod, HPF and 12/24 dB ladder VCF, two ADSRs, LFO, arpeggiator and polyphonic portamento, 64 patches. Chorus and 17 MFX types, delay and reverb. A piano-roll sequencer with a pattern per part, song mode, swing and MIDI out. USB audio, USB and TRS MIDI.",
+  "author": "Stephane Schmitz",
+  "kinds": ["synth"],
+  "image": "docs/controls.jpg",
+  "color": "#E8501E",
+  "sounds": "own"
+}
