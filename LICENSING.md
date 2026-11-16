@@ -12,7 +12,8 @@ Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
 Mini-Ju08 is built on Mini-Tone (Stephane Schmitz), itself based on Felucca, and is GPL-3.0-only as a whole.
 Its Jupiter-8 synth, effects and panel (`firmware/src/ju08.c`, `firmware/src/ju_*.c`, `tools/gen_ju_tables.py`, `host/`) are a
 fixed-point port of `jupiter8_esp32`, written by Stephane Schmitz, the author of this port, who licenses
-`jupiter8_esp32` and the port under GPL-3.0-only.
+`jupiter8_esp32` and the port under GPL-3.0-only. The panel picture `docs/ju08-panel.png`
+(a screenshot of the host build, shown on thefirmwarehub) is part of the port, GPL-3.0-only too.
 
 Copyright (C) 2026 Stephane Schmitz
 
